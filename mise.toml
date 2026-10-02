@@ -1,1 +1,33 @@
 [tools]
+java = "temurin-17.0.16+8"
+flutter = "3.47.6"
+android-sdk = "19.0"
+cmake = "3.31.8"
+go = "1.26.4"
+ninja = "1.12.1"
+
+[tasks.deps]
+description = "解析 Flutter 依赖"
+run = "./tool/flutter.sh pub get"
+
+[tasks.analyze]
+description = "静态分析手机端源码"
+run = "./tool/flutter.sh analyze --no-pub"
+
+[tasks.test-domain]
+description = "验证控制层安全边界，不含界面单元测试"
+run = "./tool/flutter.sh test test/vault_gateway_test.dart"
+
+[tasks.android-debug]
+depends = ["go-native-build"]
+description = "构建本机 Android 合成预览调试产物"
+run = "./tool/flutter.sh build apk --debug --dart-define=HARMONIA_PREVIEW=true"
+
+[tasks.preview]
+depends = ["go-native-build"]
+description = "在显式选择的测试设备运行合成预览"
+run = "./tool/flutter.sh run --dart-define=HARMONIA_PREVIEW=true"
+
+[tasks.go-native-build]
+description = "构建固定Go/BoringSSL Android arm64桥，仅生成ignored AAR"
+run = "sh tool/native-build.sh"

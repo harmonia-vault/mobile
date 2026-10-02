@@ -1,0 +1,17 @@
+name: harmonia_mobile
+description: "和弦：实验性多设备凭据与环境变量同步手机端。"
+publish_to: 'none'
+version: 0.1.0+1
+environment:
+  sdk: '>=3.13.5 <4.0.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: 6.0.0
+flutter:
+  uses-material-design: true

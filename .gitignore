@@ -11,3 +11,21 @@ build/
 dist/
 coverage/
 .harmonia/
+
+# Flutter 本机生成文件与构建产物
+.dart_tool/
+.flutter-plugins-dependencies
+.metadata
+*.iml
+.idea/
+android/local.properties
+ios/Flutter/Generated.xcconfig
+ios/Flutter/flutter_export_environment.sh
+ios/Flutter/.last_build_id
+ios/Pods/
+ios/.symlinks/
+android/.gradle/
+android/app/debug/
+android/app/profile/
+android/app/release/
+coverage/

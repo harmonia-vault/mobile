@@ -1,0 +1,146 @@
+package org.harmoniavault.harmonia_mobile.nativebridge
+
+import android.app.Activity
+import android.hardware.biometrics.BiometricPrompt
+import android.os.Build
+import android.os.CancellationSignal
+import android.os.Handler
+import android.os.Looper
+import io.flutter.plugin.common.BinaryMessenger
+import io.flutter.plugin.common.MethodCall
+import io.flutter.plugin.common.MethodChannel
+import org.harmoniavault.go.mobilebridge.Mobilebridge
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import javax.crypto.Cipher
+
+/** Flutter 只发送受限意图；私钥材料与 Go Device 永不经过 MethodChannel。 */
+class NativeBridgePlugin internal constructor(
+    private val activity: Activity,
+    messenger: BinaryMessenger,
+    private val store: ProtectedDeviceStore = ProtectedDeviceStore(activity),
+) : MethodChannel.MethodCallHandler {
+    private val channel = MethodChannel(messenger, "org.harmoniavault/native/v1")
+    private val worker = Executors.newSingleThreadExecutor()
+    private val main = Handler(Looper.getMainLooper())
+    private val busy = AtomicBoolean(false)
+    private var cancellation: CancellationSignal? = null
+    private var disposed = false
+
+    init { channel.setMethodCallHandler(this) }
+
+    override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        if (disposed) { result.error("LOCKED", "原生桥已关闭。", null); return }
+        when (call.method) {
+            "capabilities" -> {
+                if (call.arguments != null) { invalid(result); return }
+                result.success(mapOf("version" to 1, "goCore" to true,
+                    "systemStrongAuthentication" to store.supported(), "protectedDeviceExists" to store.exists(),
+                    "realVaultReady" to false, "softwareDeviceKeys" to true))
+            }
+            "executePublic" -> {
+                val command = call.arguments as? String
+                if (command == null || command.toByteArray(Charsets.UTF_8).size > 4096) { invalid(result); return }
+                runWorker(result) { Mobilebridge.executePublic(command) }
+            }
+            "createDevice" -> {
+                if (call.arguments != null) { invalid(result); return }
+                authenticated(result, create = true, command = null)
+            }
+            "executeUnlocked" -> {
+                val command = call.arguments as? String
+                if (command == null || command.toByteArray(Charsets.UTF_8).size > 4096) { invalid(result); return }
+                authenticated(result, create = false, command = command)
+            }
+            else -> result.notImplemented()
+        }
+    }
+
+    private fun invalid(result: MethodChannel.Result) = result.error("INVALID_COMMAND", "原生业务请求不符合协议。", null)
+    private fun acquire(result: MethodChannel.Result): Boolean {
+        if (!busy.compareAndSet(false, true)) { result.error("BUSY", "已有原生业务操作正在进行。", null); return false }
+        return true
+    }
+    private fun finish(result: MethodChannel.Result, value: Any? = null, code: String? = null) {
+        main.post {
+            busy.set(false)
+            cancellation = null
+            if (!disposed) {
+                if (code == null) result.success(value)
+                else result.error(code, "原生安全操作未完成，未授予保险库访问。", null)
+            }
+        }
+    }
+    private fun runWorker(result: MethodChannel.Result, operation: () -> Any?) {
+        if (!acquire(result)) return
+        worker.execute {
+            try { finish(result, operation()) }
+            catch (_: Exception) { finish(result, code = "GO_REJECTED") }
+        }
+    }
+
+    private fun authenticated(result: MethodChannel.Result, create: Boolean, command: String?) {
+        if (!store.supported() || Build.VERSION.SDK_INT < 30) {
+            result.error("AUTH_UNAVAILABLE", "需要系统设备密码或强生物认证，当前不能生成或解包设备钥匙。", null)
+            return
+        }
+        if (!acquire(result)) return
+        val cipher: Cipher
+        val ciphertext: ByteArray?
+        try {
+            if (create) { cipher = store.prepareCreate(); ciphertext = null }
+            else { val opening = store.prepareOpen(); cipher = opening.cipher; ciphertext = opening.ciphertext }
+        } catch (_: Exception) { finish(result, code = "PROTECTED_KEYS_UNAVAILABLE"); return }
+        val consumed = AtomicBoolean(false)
+        val signal = CancellationSignal()
+        cancellation = signal
+        val prompt = BiometricPrompt.Builder(activity)
+            .setTitle("和弦设备认证")
+            .setSubtitle("解锁本次设备钥匙操作")
+            .setAllowedAuthenticators(ProtectedDeviceStore.AUTHENTICATORS)
+            .build()
+        try {
+            prompt.authenticate(BiometricPrompt.CryptoObject(cipher), signal, activity.mainExecutor,
+                object : BiometricPrompt.AuthenticationCallback() {
+                    override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                        if (consumed.compareAndSet(false, true)) finish(result, code = "AUTH_CANCELLED")
+                    }
+                    override fun onAuthenticationFailed() {
+                        if (consumed.compareAndSet(false, true)) { signal.cancel(); finish(result, code = "AUTH_FAILED") }
+                    }
+                    override fun onAuthenticationSucceeded(authentication: BiometricPrompt.AuthenticationResult) {
+                        if (!consumed.compareAndSet(false, true)) return
+                        if (authentication.cryptoObject?.cipher !== cipher || disposed) { finish(result, code = "AUTH_FAILED"); return }
+                        worker.execute {
+                            var material: ByteArray? = null
+                            var device: org.harmoniavault.go.mobilebridge.Device? = null
+                            try {
+                                // 成功认证后才生成设备钥，取消/失败不会生成可信设备。
+                                if (create) {
+                                    device = Mobilebridge.newDevice()
+                                    material = device.exportProtectedMaterial()
+                                    store.saveAuthenticated(cipher, material)
+                                    finish(result, device.execute("{\"version\":1,\"operation\":\"publicInfo\"}"))
+                                } else {
+                                    material = store.openAuthenticated(cipher, ciphertext!!)
+                                    device = Mobilebridge.importProtectedMaterial(material)
+                                    material.fill(0)
+                                    finish(result, device.execute(command!!))
+                                }
+                            } catch (_: Exception) { finish(result, code = "GO_OR_KEYSTORE_REJECTED") }
+                            finally { material?.fill(0); device?.close() }
+                        }
+                    }
+                })
+        } catch (_: Exception) {
+            if (consumed.compareAndSet(false, true)) finish(result, code = "AUTH_UNAVAILABLE")
+        }
+    }
+
+    fun dispose() {
+        disposed = true
+        cancellation?.cancel()
+        channel.setMethodCallHandler(null)
+        worker.shutdown()
+    }
+}
