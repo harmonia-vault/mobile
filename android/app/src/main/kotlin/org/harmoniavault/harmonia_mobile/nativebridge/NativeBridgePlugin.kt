@@ -13,19 +13,29 @@ import org.harmoniavault.go.mobilebridge.Mobilebridge
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.crypto.Cipher
+import org.json.JSONObject
+import org.harmoniavault.go.mobilebridge.VaultWorkflow
+import javax.net.ssl.TrustManagerFactory
+import javax.net.ssl.X509TrustManager
+import java.security.KeyStore
+import android.util.Base64
 
 /** Flutter 只发送受限意图；私钥材料与 Go Device 永不经过 MethodChannel。 */
 class NativeBridgePlugin internal constructor(
     private val activity: Activity,
     messenger: BinaryMessenger,
     private val store: ProtectedDeviceStore = ProtectedDeviceStore(activity),
+    private val workflowFilename: String = "workflow-state-v1.gcm",
+    private val additionalCA: ByteArray = ByteArray(0),
+    private val beforeWorkflowSave: () -> Unit = {},
 ) : MethodChannel.MethodCallHandler {
     private val channel = MethodChannel(messenger, "org.harmoniavault/native/v1")
     private val worker = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private val busy = AtomicBoolean(false)
     private var cancellation: CancellationSignal? = null
-    private var disposed = false
+    @Volatile private var disposed = false
+    @Volatile private var activeWorkflow: VaultWorkflow? = null
 
     init { channel.setMethodCallHandler(this) }
 
@@ -46,6 +56,15 @@ class NativeBridgePlugin internal constructor(
             "createDevice" -> {
                 if (call.arguments != null) { invalid(result); return }
                 authenticated(result, create = true, command = null)
+            }
+            "workflowProfile" -> {
+                if (call.arguments != null) { invalid(result); return }
+                runWorker(result) { Mobilebridge.workflowProfile() }
+            }
+            "executeWorkflow" -> {
+                val command = call.arguments as? String
+                if (command == null || command.toByteArray(Charsets.UTF_8).size > 32768) { invalid(result); return }
+                authenticated(result, create = false, command = command, workflow = true)
             }
             "executeUnlocked" -> {
                 val command = call.arguments as? String
@@ -79,7 +98,7 @@ class NativeBridgePlugin internal constructor(
         }
     }
 
-    private fun authenticated(result: MethodChannel.Result, create: Boolean, command: String?) {
+    private fun authenticated(result: MethodChannel.Result, create: Boolean, command: String?, workflow: Boolean = false) {
         if (!store.supported() || Build.VERSION.SDK_INT < 30) {
             result.error("AUTH_UNAVAILABLE", "需要系统设备密码或强生物认证，当前不能生成或解包设备钥匙。", null)
             return
@@ -122,10 +141,24 @@ class NativeBridgePlugin internal constructor(
                                     store.saveAuthenticated(cipher, material)
                                     finish(result, device.execute("{\"version\":1,\"operation\":\"publicInfo\"}"))
                                 } else {
+                                    check(!disposed)
                                     material = store.openAuthenticated(cipher, ciphertext!!)
                                     device = Mobilebridge.importProtectedMaterial(material)
                                     material.fill(0)
-                                    finish(result, device.execute(command!!))
+                                    if (workflow) {
+                                        val protected = ProtectedWorkflowStore(activity, workflowFilename, beforeWorkflowSave) { !disposed }
+                                        val endpoint = JSONObject(command!!).getString("endpoint")
+                                        val state = protected.load()
+                                        val flow = device.openWorkflow(endpoint, protected.namespace, state, nativeCertificates(), protected)
+                                        activeWorkflow = flow
+                                        try {
+                                            check(!disposed)
+                                            val response = flow.execute(command)
+                                            if (flow.requiresDeviceDeletion()) { store.delete(); protected.delete() }
+                                            check(!disposed)
+                                            finish(result, response)
+                                        } finally { activeWorkflow = null; flow.close(); state.fill(0) }
+                                    } else finish(result, device.execute(command!!))
                                 }
                             } catch (_: Exception) { finish(result, code = "GO_OR_KEYSTORE_REJECTED") }
                             finally { material?.fill(0); device?.close() }
@@ -137,8 +170,21 @@ class NativeBridgePlugin internal constructor(
         }
     }
 
+    /** Go标准HTTPS使用系统信任根；测试追加CA仅构造器注入，MethodChannel无此字段。 */
+    private fun nativeCertificates(): ByteArray {
+        val factory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
+        factory.init(null as KeyStore?)
+        val roots = factory.trustManagers.filterIsInstance<X509TrustManager>().flatMap { it.acceptedIssuers.toList() }
+        val pem = roots.joinToString("") { cert ->
+            "-----BEGIN CERTIFICATE-----\n" + Base64.encodeToString(cert.encoded, Base64.NO_WRAP) +
+                "\n-----END CERTIFICATE-----\n"
+        }.toByteArray(Charsets.US_ASCII)
+        return pem + additionalCA
+    }
+
     fun dispose() {
         disposed = true
+        activeWorkflow?.cancel()
         cancellation?.cancel()
         channel.setMethodCallHandler(null)
         worker.shutdown()

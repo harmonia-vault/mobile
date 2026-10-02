@@ -134,11 +134,21 @@ internal class ProtectedDeviceStore(
             output.write(HEADER)
             output.write(cipher.iv)
             output.write(ciphertext)
+            Os.fchmod(output.fd, 0b110000000)
+            output.fd.sync()
             atomicFile.finishWrite(output)
-            Os.chmod(atomicFile.baseFile.path, 0b110000000)
         } catch (failure: Exception) {
             atomicFile.failWrite(output)
             throw failure
         }
     }
+    fun delete() {
+        // 先销毁包封key，任何遗留文件不再可解包；失败必须报告，不能假报退出。
+        val keystore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        if (keystore.containsAlias(alias)) keystore.deleteEntry(alias)
+        atomicFile.delete()
+        check(!keystore.containsAlias(alias) && !exists() &&
+            !File(atomicFile.baseFile.path + ".new").exists())
+    }
+
 }

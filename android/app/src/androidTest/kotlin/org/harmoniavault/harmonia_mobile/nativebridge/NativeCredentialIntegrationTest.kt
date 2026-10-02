@@ -22,6 +22,7 @@ class NativeCredentialIntegrationTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val alias = "harmonia/synthetic-credential-test/v1"
     private val filename = "synthetic-credential-test.gcm"
+    private var cancellationTest = false
     private val messenger = object : BinaryMessenger {
         override fun send(channel: String, message: ByteBuffer?) {}
         override fun send(channel: String, message: ByteBuffer?, callback: BinaryMessenger.BinaryReply?) {}
@@ -47,7 +48,7 @@ class NativeCredentialIntegrationTest {
     private fun request(plugin: NativeBridgePlugin, method: String, args: Any?): Outcome {
         val outcome = Outcome()
         instrumentation.runOnMainSync { plugin.onMethodCall(MethodCall(method, args), outcome) }
-        Log.i("HarmoniaNativeTest", "AWAIT_SYSTEM_AUTH:$method")
+        Log.i("HarmoniaNativeTest", "AWAIT_SYSTEM_AUTH:${if (cancellationTest) "cancel:" else ""}$method")
         assertTrue("system authentication callback timed out", outcome.ready.await(60, TimeUnit.SECONDS))
         return outcome
     }
@@ -85,6 +86,7 @@ class NativeCredentialIntegrationTest {
         }
     }
     @Test fun testCancelledAuthenticationCreatesNoDevice() {
+        cancellationTest = true
         cleanup()
         val store = ProtectedDeviceStore(instrumentation.targetContext, alias, filename)
         assertTrue("explicit synthetic device credential required", store.supported())
