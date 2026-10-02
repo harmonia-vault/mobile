@@ -36,6 +36,7 @@ class NativeBridgePlugin internal constructor(
     private var cancellation: CancellationSignal? = null
     @Volatile private var disposed = false
     @Volatile private var activeWorkflow: VaultWorkflow? = null
+    @Volatile private var pendingShortCode: ByteArray? = null
 
     init { channel.setMethodCallHandler(this) }
 
@@ -60,6 +61,17 @@ class NativeBridgePlugin internal constructor(
             "workflowProfile" -> {
                 if (call.arguments != null) { invalid(result); return }
                 runWorker(result) { Mobilebridge.workflowProfile() }
+            }
+            "executeApproval" -> {
+                val args = call.arguments as? Map<*, *>
+                val command = args?.get("command") as? String
+                val incoming = args?.get("shortCode") as? ByteArray
+                if (args == null || args.keys != setOf("command", "shortCode") || command == null ||
+                    command.toByteArray(Charsets.UTF_8).size > 32768 || incoming == null || incoming.size != 8 ||
+                    incoming.any { it < 48 || it > 57 }) { incoming?.fill(0); invalid(result); return }
+                // 消费通道传入缓冲；只有短暂原生副本等候本次系统认证，不写JSON或文件。
+                val shortCode = incoming.copyOf(); incoming.fill(0)
+                authenticated(result, create = false, command = command, workflow = true, shortCode = shortCode)
             }
             "executeWorkflow" -> {
                 val command = call.arguments as? String
@@ -98,18 +110,20 @@ class NativeBridgePlugin internal constructor(
         }
     }
 
-    private fun authenticated(result: MethodChannel.Result, create: Boolean, command: String?, workflow: Boolean = false) {
+    private fun authenticated(result: MethodChannel.Result, create: Boolean, command: String?, workflow: Boolean = false, shortCode: ByteArray? = null) {
         if (!store.supported() || Build.VERSION.SDK_INT < 30) {
+            clearApproval(shortCode)
             result.error("AUTH_UNAVAILABLE", "需要系统设备密码或强生物认证，当前不能生成或解包设备钥匙。", null)
             return
         }
-        if (!acquire(result)) return
+        if (!acquire(result)) { clearApproval(shortCode); return }
+        pendingShortCode = shortCode
         val cipher: Cipher
         val ciphertext: ByteArray?
         try {
             if (create) { cipher = store.prepareCreate(); ciphertext = null }
             else { val opening = store.prepareOpen(); cipher = opening.cipher; ciphertext = opening.ciphertext }
-        } catch (_: Exception) { finish(result, code = "PROTECTED_KEYS_UNAVAILABLE"); return }
+        } catch (_: Exception) { clearApproval(shortCode); finish(result, code = "PROTECTED_KEYS_UNAVAILABLE"); return }
         val consumed = AtomicBoolean(false)
         val signal = CancellationSignal()
         cancellation = signal
@@ -122,14 +136,14 @@ class NativeBridgePlugin internal constructor(
             prompt.authenticate(BiometricPrompt.CryptoObject(cipher), signal, activity.mainExecutor,
                 object : BiometricPrompt.AuthenticationCallback() {
                     override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                        if (consumed.compareAndSet(false, true)) finish(result, code = "AUTH_CANCELLED")
+                        if (consumed.compareAndSet(false, true)) { clearApproval(shortCode); finish(result, code = "AUTH_CANCELLED") }
                     }
                     override fun onAuthenticationFailed() {
-                        if (consumed.compareAndSet(false, true)) { signal.cancel(); finish(result, code = "AUTH_FAILED") }
+                        if (consumed.compareAndSet(false, true)) { clearApproval(shortCode); signal.cancel(); finish(result, code = "AUTH_FAILED") }
                     }
                     override fun onAuthenticationSucceeded(authentication: BiometricPrompt.AuthenticationResult) {
                         if (!consumed.compareAndSet(false, true)) return
-                        if (authentication.cryptoObject?.cipher !== cipher || disposed) { finish(result, code = "AUTH_FAILED"); return }
+                        if (authentication.cryptoObject?.cipher !== cipher || disposed) { clearApproval(shortCode); finish(result, code = "AUTH_FAILED"); return }
                         worker.execute {
                             var material: ByteArray? = null
                             var device: org.harmoniavault.go.mobilebridge.Device? = null
@@ -153,7 +167,7 @@ class NativeBridgePlugin internal constructor(
                                         activeWorkflow = flow
                                         try {
                                             check(!disposed)
-                                            val response = flow.execute(command)
+                                            val response = if (shortCode != null) flow.executeApproval(command, shortCode) else flow.execute(command)
                                             if (flow.requiresDeviceDeletion()) { store.delete(); protected.delete() }
                                             check(!disposed)
                                             finish(result, response)
@@ -161,12 +175,12 @@ class NativeBridgePlugin internal constructor(
                                     } else finish(result, device.execute(command!!))
                                 }
                             } catch (_: Exception) { finish(result, code = "GO_OR_KEYSTORE_REJECTED") }
-                            finally { material?.fill(0); device?.close() }
+                            finally { clearApproval(shortCode); material?.fill(0); device?.close() }
                         }
                     }
                 })
         } catch (_: Exception) {
-            if (consumed.compareAndSet(false, true)) finish(result, code = "AUTH_UNAVAILABLE")
+            if (consumed.compareAndSet(false, true)) { clearApproval(shortCode); finish(result, code = "AUTH_UNAVAILABLE") }
         }
     }
 
@@ -182,8 +196,14 @@ class NativeBridgePlugin internal constructor(
         return pem + additionalCA
     }
 
+    private fun clearApproval(bytes: ByteArray?) {
+        bytes?.fill(0)
+        if (pendingShortCode === bytes) pendingShortCode = null
+    }
+
     fun dispose() {
         disposed = true
+        clearApproval(pendingShortCode)
         activeWorkflow?.cancel()
         cancellation?.cancel()
         channel.setMethodCallHandler(null)

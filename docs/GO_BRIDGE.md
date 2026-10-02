@@ -50,4 +50,16 @@ Dart 不实现密码学、密钥派生、SPAKE2、封套或服务器权限算法
 
 最终同一构建的全套 Android 原生 12/12 通过（184.013 秒，40 次设备密码系统提示含取消）。新增真实 Admin 自撤销：正常 200 返回已确认接受的 sequence 并清本机 alias/key/state；接受后合成 502 经密封事务重启，以原 id 先查询、再 boot 403 确认失效，返回 `completed=false / acceptanceUnknown=true / deviceInvalidated=true` 并清本机资料。pending 的 View/Pull/CRUD 拒绝，认证后的 `selfRevocationInfo` 只给原 id/expiry；120 秒到期清原 bearer 后只查询原 id，不重 POST 或隐式换 id，结果明确 `REVOCATION_EXPIRED_PENDING`。恢复码、签包、原 token 不返回 Dart。
 
-最终Go普通/native race（1.446/1.393秒）、AAR/Kotlin main/test构建和分析（5.8秒）通过；AtomicFile中断/超限保持旧密文及0600实际通过。清合成PIN后未配置凭据基础4/4（0.028秒）仍failclosed。test alias/文件、两个nativefixture包及临时PIN均清理，原preview仍安装，AVD数据保留且无reset/wipe，HTTPS临时SQLite夹具已停止。原始日志仅ignored `build/native/workflow-full-runtime.txt`，未发布APK/AAR。Flutter UI/defaultgateway及整体 `realVaultReady=false` 未改；远程批准、恢复、轮换、角色管理、iOS、真机强生物/硬件保护仍未完成。
+最终Go普通/native race（1.446/1.393秒）、AAR/Kotlin main/test构建和分析（5.8秒）通过；AtomicFile中断/超限保持旧密文及0600实际通过。清合成PIN后未配置凭据基础4/4（0.028秒）仍failclosed。test alias/文件、两个nativefixture包及临时PIN均清理，原preview仍安装，AVD数据保留且无reset/wipe，HTTPS临时SQLite夹具已停止。原始日志仅ignored `build/native/workflow-full-runtime.txt`，未发布APK/AAR。Flutter UI/defaultgateway及整体 `realVaultReady=false` 未改；本段当时未接通远程批准；随后首根v2窄审批见下节。恢复、轮换、角色管理、iOS、真机强生物/硬件保护未算此历史证据。
+
+## 首根原生批准 CLI（2026-10-02 UTC）
+
+新增 NativeWorkflowAdapter.approvePairing/retryApproval/approvalInfo/cancelApproval，不接Flutter UI/defaultgateway，整体ready仍false。短码是独立Uint8List/ByteArray，仅本次系统强认证后进入Go BoringSSL；业务JSON只有pairingId与1–16个明确环境/角色/期限，不接受root/证书/封套。各op重新系统认证；只有approve局部120秒，其余30秒。来源只来自本机初始化原证据和当前已验授权，旧缺来源上下文failclosed。批准unknown不解除cache/write门槛，取消仅prepared未尝试HTTP；approved不表示新设备trusted。
+
+同正常AAR focused原生跨端1/1，59.074秒；新mise复现入口又1/1，58.733秒，各21次系统提示含1取消/4 compiledCLI exit0。包含新手机真实firstroot/变量→MacCLI v2双签→boot/HPKE验签pull/own environment.sh导出与rw put；真实接受批准后502→原生新对象同id确认complete；prepared/attempted两保存失败都无批准POST，prepared可明确取消；auth取消/BUSY无state改动。短码只匿名pipe+局部ADB test socket内存，没有runner args、adb shell文本、HTTP、日志或磁盘传码。compileSdk36、runtimeAPI34。
+
+Go普通/native race与正常AAR/Kotlin main/test构建通过；日志在ignored build/native/approval-*.txt。测试只本轮nativefixture包/Keystore槽、独立新CLI目录、合成.invalid账号与有限一小时rw范围；该通过基线及最新失败复测的PIN、两test包、文件/槽、CLI目录/进程和HTTPS夹具均已清；CLI目录/进程为0、forward无残留，127.0.0.1:4443连接被拒绝，原preview/API34 AVD数据保留且模拟器继续运行。cert3/非根/新环境来源、新Genesis恢复与恢复轮换仍待各Go合同最终冻结后单独原生验收，不靠本证据扩大ready。
+
+可复现入口 `HARMONIA_TEST_SERIAL=emulator-5580 mise run test-native-approval`，需先按core-go/mobilebridge/APPROVAL_NATIVE.md准备fixed AAR/fixture APK、显式合法CA服务和隔离AVD测试PIN。上述通过对应当时默认v2的core-go c4dec971编译基线（working tree modified）；新版默认3后controller明确CLI `--certificate-version 2`，不自动降级。origin-aware复测55.248/54.702秒失败于第二候选verified Pull后，服务器补历史mutation授权及写入者归档双签身份闭包，未放宽客户端校验。新正常AAR+当前CLI(1801392+dirty，准确哈希见核心APPROVAL_NATIVE.md)仅一次freshfocused完整1/1 PASS59.634秒，21提示含1取消，四controller0；两候选双签/boot/verifiedPull/隔离导出/rw写、accepted502原id确认、两同步保存失败拒POST和Logout均实际运行。编译产物以记录哈希为界，后续Go源码改动不冒充已测试。成功只由真实JUnit与四compiledCLI阶段共同确认，失败清自身controller/forward；调用者仍须finally清PIN/fixture包/服务。详见核心源码仓库 mobilebridge/APPROVAL_NATIVE.md。
+
+本轮fresh复测结束后的实际清理：noBackup测试文件为空、合成PIN清除、两nativefixture包卸载成功、新CLI目录/进程为0、测试forward无残留，HTTPS76196结束且127.0.0.1:4443连接被拒绝。原preview仍安装，API34 AVD继续运行且未reset/wipe。清理原始记录在ignored build/native/approval-fresh-cleanup.txt；未发布APK/AAR或自行提交。

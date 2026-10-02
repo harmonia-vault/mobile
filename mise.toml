@@ -31,3 +31,7 @@ run = "./tool/flutter.sh run --dart-define=HARMONIA_PREVIEW=true"
 [tasks.go-native-build]
 description = "构建固定Go/BoringSSL Android arm64桥，仅生成ignored AAR"
 run = "sh tool/native-build.sh"
+
+[tasks.test-native-approval]
+description = "仅显式隔离AVD：原生审批到compiled CLI focused验收；先按GO_BRIDGE准备夹具与合成PIN"
+run = 'python3 tool/native-approval-test.py --serial "${HARMONIA_TEST_SERIAL:?须显式选择合成emulator序号}"'

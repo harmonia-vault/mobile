@@ -80,6 +80,40 @@ class NativeWorkflowAdapter {
     'name': name,
     'id': id,
   });
+
+  /// 短码只作为本次调用字节缓冲传给原生SPAKE2，结束清理可控缓冲，不持久化。
+  /// approved只表示管理者批准，complete才表示已验新设备双签完成。
+  Future<Map<String, Object?>> approvePairing({
+    required String pairingId,
+    required Uint8List shortCode,
+    required List<NativeApprovalSelection> selections,
+  }) async {
+    try {
+      return _decode(
+        await _channel.invokeMethod<String>('executeApproval', {
+          'command': jsonEncode({
+            'version': 1,
+            'operation': 'approvePairing',
+            'endpoint': endpoint,
+            'pairingId': pairingId,
+            'selections': jsonEncode(
+              selections.map((s) => s.toJson()).toList(),
+            ),
+          }),
+          'shortCode': shortCode,
+        }),
+      );
+    } finally {
+      shortCode.fillRange(0, shortCode.length, 0);
+    }
+  }
+
+  Future<Map<String, Object?>> retryApproval(String pairingId) =>
+      _execute('retryApproval', {'pairingId': pairingId});
+  Future<Map<String, Object?>> approvalInfo() => _execute('approvalInfo', {});
+  Future<Map<String, Object?>> cancelApproval(String pairingId) =>
+      _execute('cancelApproval', {'pairingId': pairingId});
+
   Future<Map<String, Object?>> selfRevocationInfo() =>
       _execute('selfRevocationInfo', {});
   Future<Map<String, Object?>> revokeSelf(String id) =>
@@ -111,4 +145,21 @@ class NativeWorkflowAdapter {
     }
     return Map<String, Object?>.unmodifiable(result);
   }
+}
+
+/// 仅明确环境、角色和期限；证书、来源证明和封套由Go本地重建。
+class NativeApprovalSelection {
+  const NativeApprovalSelection({
+    required this.environmentId,
+    required this.role,
+    required this.expiresAt,
+  });
+  final String environmentId;
+  final String role;
+  final String expiresAt;
+  Map<String, String> toJson() => {
+    'environmentId': environmentId,
+    'role': role,
+    'expiresAt': expiresAt,
+  };
 }
