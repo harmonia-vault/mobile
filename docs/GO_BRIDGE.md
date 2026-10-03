@@ -74,3 +74,13 @@ Go普通/native race与正常AAR/Kotlin main/test构建通过；日志在ignored
 实际产物来自公开core0787b9f/mobile01dadef/serverf5adbed/protocolfe670/workspacec446加10个明确native候选文件，source manifest SHA256 17153ce7ce85992b2107f5e290c8c12f91228cfada0a5a18b5a0bb18c66bad97；AAR c478fe40c227a12469e586e0fd7adc43290ef4c497121abf01eba796f7ababd2；默认3 CLI e141e9ee49db8969071956604265eea216860c645a1e26ccb80d443ed80fb02a。archive CLI明确buildvcs=false，无VCS metadata；源在构建/运行后未变化，后续当前HEAD与其它Go草稿不属于本证据。精确commit/候选边界、APK哈希、固定工具链、复现方法与未接通能力见[核心V3_NATIVE.md](../../core-go/mobilebridge/V3_NATIVE.md)。源码公开与ignored缓存分开，不发布二进制或凭据；不宣称字节完全可复现。
 
 实际清理：本轮noBackup文件空，系统PIN清除、两个nativefixture包卸载Success，CLI目录/进程0、forward空，HTTPS38160退出0且4443连接拒绝。原preview仍安装；同API34 AVD重启后数据保留并继续会话57725，无reset/wipe。日志、源/产物manifest与cleanup只在core-go/.build/native-v3-snapshot，compileSdk36与运行API34分别记录。恢复旧Ed私钥的独立registry4文件仅进程生命周期骨架，未绑定AAR/Kotlin/Dart或实际恢复；cert4 typedSession另作切片，不能据此打开Recovery/整体ready。
+
+## 受保护设备管理（2026-10-03 UTC）
+
+NativeWorkflowAdapter新增managementDevices/prepareDeviceGrant/prepareOtherDeviceRevocation/managementInfo/retryManagement/cancelManagement，仅业务意图。既有executeWorkflow每次新的CryptoObject认证后交Go；无公钥/封套/root/任意签包/token从Dart输入，目录只返回已验管理元数据。原完整交易同步AES密封；未POST取消退休id，unknown同id/contentHash查询且不可取消或重签。Accepted不等于Applied；末次保存失败Appliedfalse且View/CRUD关闭，授权失效清alias/key/state。UI/defaultgateway/realVaultReady=false未变，Recovery仍unsupported。
+
+独立固定公开归档core894f2ad/mobile3b72a29/servere1572d6/protob770001/workspace2ecc9cc加9个明确native候选：新正常AAR/Kotlin主/test APK构建、快照常规/native bridge race1.397/1.467秒、非UI分析0.7秒通过；管理focused1/1 PASS110.889秒、42次系统设备密码CryptoObject、合成Go peer exit0。实际验证prepared取消/原id退休、attempted前保存失败无POST、最后seal失败Acceptedtrue/Appliedfalse及新对象原id恢复、serveraccepted502unknown门槛/不增加POST、旧RO回执不覆盖当前RW、C真实RO拒写/RW写/none移除/环境keyVersion2再授权更高GG、prepared另一设备撤销跨New恢复原token提交及C真实401→boot403关闭。对端不是正式CLI桌面系统认证；本轮未新增认证取消/硬件证明场景。
+
+SourceManifest5dbcb8985fddc47b8815046c6b8e4f470424c689a5ef1da8f28364168d489487，AARb61ce06fd73c529b7fbeee7be8e1a48b3cfd2d0f15873dcc6653485023711fb7；构建/运行后归档sourceChanges为空，不称后续HEAD或全当前tree通过。compileSdk36与实际API34分别记录。完整commit/候选/产物哈希、复现入口mise test-native-management及边界见[核心MANAGEMENT_NATIVE.md](../../core-go/mobilebridge/MANAGEMENT_NATIVE.md)。实际本轮noBackup文件空、PIN清除/两fixture包卸载Success、forward空、Go peer和HTTPS96571退出0、4443拒连接，preview及AVD57725保留无reset/wipe。原始manifest/driver/JUnit/cleanup只在core-go/.build/native-management-snapshot；无UI改动或自行提交。
+
+手机请求公开限制：executeWorkflow/executeApproval/executeEnrollment的整段command JSON UTF8最多32768字节，含endpoint、操作id、字段名及JSON转义。Go协议value上限65536字节不等于手机可以提交64KiB；实际值余量须按完整序列化请求的UTF8字节数核算，不能按Dart字符数。变量名限ASCII `[A-Za-z_][A-Za-z0-9_]{0,127}`，`__HARMONIA_`前缀不分大小写拒绝；环境名trim后非空、最多120个Unicode码点、无NUL。Go仍是权威校验，超过原生请求上限会在认证前拒绝。

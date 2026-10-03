@@ -170,6 +170,33 @@ class NativeWorkflowAdapter {
     }
   }
 
+  /// 只返回Go已验管理元数据，不包含目录公钥、封套或原签包。
+  Future<Map<String, Object?>> managementDevices(String environmentId) =>
+      _execute('managementDevices', {'environmentId': environmentId});
+  Future<Map<String, Object?>> prepareDeviceGrant({
+    required String environmentId,
+    required String subjectDeviceId,
+    required String role,
+    required String expiresAt,
+    required String id,
+  }) => _execute('prepareDeviceGrant', {
+    'environmentId': environmentId, 'subjectDeviceId': subjectDeviceId,
+    'role': role, 'expiresAt': expiresAt, 'id': id,
+  });
+  Future<Map<String, Object?>> prepareOtherDeviceRevocation({
+    required String environmentId,
+    required String subjectDeviceId,
+    required String id,
+  }) => _execute('prepareOtherDeviceRevocation', {
+    'environmentId': environmentId, 'subjectDeviceId': subjectDeviceId, 'id': id,
+  });
+  Future<Map<String, Object?>> managementInfo() => _execute('managementInfo', {});
+  /// 只能沿原id/原签包；accepted与applied分别表示，任何保存错误不报告applied。
+  Future<Map<String, Object?>> retryManagement(String id) =>
+      _execute('retryManagement', {'id': id});
+  Future<Map<String, Object?>> cancelManagement(String id) =>
+      _execute('cancelManagement', {'id': id});
+
   Future<Map<String, Object?>> selfRevocationInfo() =>
       _execute('selfRevocationInfo', {});
   Future<Map<String, Object?>> revokeSelf(String id) =>
