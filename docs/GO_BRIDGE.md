@@ -1,6 +1,6 @@
 # Flutter 与 Go 桥接边界
 
-Go 窄移动桥、Android 系统强认证 AES 包封、真实 JNI 密码学及独立首根管理手机高层已完成本机切片验证。Flutter 的可信设备入网、登录、共享同步和恢复尚未接上该切片，`FailClosedGateway` 仍拒绝真实操作且不进行网络请求。`SyntheticPreviewGateway` 是显式编译开关启用的内存示例，不用于真实保险库。
+Go 窄移动桥、Android 系统强认证 AES 包封、真实 JNI 密码学、首根管理手机高层及显式cert3来源授权已完成本机切片验证。Flutter 的可信设备入网、登录、共享同步和恢复尚未接上该切片，`FailClosedGateway` 仍拒绝真实操作且不进行网络请求。`SyntheticPreviewGateway` 是显式编译开关启用的内存示例，不用于真实保险库。
 
 ## 目标调用链
 
@@ -63,3 +63,14 @@ Go普通/native race与正常AAR/Kotlin main/test构建通过；日志在ignored
 可复现入口 `HARMONIA_TEST_SERIAL=emulator-5580 mise run test-native-approval`，需先按core-go/mobilebridge/APPROVAL_NATIVE.md准备fixed AAR/fixture APK、显式合法CA服务和隔离AVD测试PIN。上述通过对应当时默认v2的core-go c4dec971编译基线（working tree modified）；新版默认3后controller明确CLI `--certificate-version 2`，不自动降级。origin-aware复测55.248/54.702秒失败于第二候选verified Pull后，服务器补历史mutation授权及写入者归档双签身份闭包，未放宽客户端校验。新正常AAR+当前CLI(1801392+dirty，准确哈希见核心APPROVAL_NATIVE.md)仅一次freshfocused完整1/1 PASS59.634秒，21提示含1取消，四controller0；两候选双签/boot/verifiedPull/隔离导出/rw写、accepted502原id确认、两同步保存失败拒POST和Logout均实际运行。编译产物以记录哈希为界，后续Go源码改动不冒充已测试。成功只由真实JUnit与四compiledCLI阶段共同确认，失败清自身controller/forward；调用者仍须finally清PIN/fixture包/服务。详见核心源码仓库 mobilebridge/APPROVAL_NATIVE.md。
 
 本轮fresh复测结束后的实际清理：noBackup测试文件为空、合成PIN清除、两nativefixture包卸载成功、新CLI目录/进程为0、测试forward无残留，HTTPS76196结束且127.0.0.1:4443连接被拒绝。原preview仍安装，API34 AVD继续运行且未reset/wipe。清理原始记录在ignored build/native/approval-fresh-cleanup.txt；未发布APK/AAR或自行提交。
+
+
+## cert3 原生 Y-only 入网/轮换/审批（2026-10-03 UTC）
+
+显式新操作为approvePairingV3/retryApprovalV3/approvalInfoV3/cancelApprovalV3、enrollDeviceV3/resumeEnrollmentV3/enrollmentInfoV3与rotateEnvironmentKey。旧approvePairing明确v2，不猜版本/降级；每操作重新CryptoObject系统强认证，局部PAKE120秒，其余30秒。Kotlin executeEnrollment同次Login+完整PAKE，短码独立ByteArray并清可控副本；Dart新增只属于业务adapter，不改UI/defaultgateway/realVaultReady=false，Recovery仍unsupported。
+
+新正常AAR及独立主/test APK、默认cert3编译CLI和两controllers实际构建通过；非UI adapter analyze0.8秒无问题。新focused 1/1 PASS52.072秒，19次系统设备密码认证、两controller0。本轮无取消场景，不复用旧12/12或v2证据。Host合成根A建立X/Y→Android B cert3获Y-only Admin→最终Applied AES保存#4失败无view/trustedfalse→原receipt/id恢复后只显示已验Y→拒X写/轮换/批准无POST→B轮换Y同idcheckpoint不增→B批准默认3 MacCLI C有限RW Y-only→真服务器接受后502/PENDING/view与cancel拒绝→C双签/boot/verifiedPull/隔离导出/rw put且daemon运行中拒X→B新对象原id确认complete并验C写→Logout。v2批准counter=0；没有认证/TLS/来源校验回退。首个fixture13.476秒仅因测试把Go View枚举Admin写成admin而停止，部分入网门槛通过、轮换/C未跑；失败manifest/log保留，修正测试及权限错误分类并正常重建后才获得完整通过。
+
+实际产物来自公开core0787b9f/mobile01dadef/serverf5adbed/protocolfe670/workspacec446加10个明确native候选文件，source manifest SHA256 17153ce7ce85992b2107f5e290c8c12f91228cfada0a5a18b5a0bb18c66bad97；AAR c478fe40c227a12469e586e0fd7adc43290ef4c497121abf01eba796f7ababd2；默认3 CLI e141e9ee49db8969071956604265eea216860c645a1e26ccb80d443ed80fb02a。archive CLI明确buildvcs=false，无VCS metadata；源在构建/运行后未变化，后续当前HEAD与其它Go草稿不属于本证据。精确commit/候选边界、APK哈希、固定工具链、复现方法与未接通能力见[核心V3_NATIVE.md](../../core-go/mobilebridge/V3_NATIVE.md)。源码公开与ignored缓存分开，不发布二进制或凭据；不宣称字节完全可复现。
+
+实际清理：本轮noBackup文件空，系统PIN清除、两个nativefixture包卸载Success，CLI目录/进程0、forward空，HTTPS38160退出0且4443连接拒绝。原preview仍安装；同API34 AVD重启后数据保留并继续会话57725，无reset/wipe。日志、源/产物manifest与cleanup只在core-go/.build/native-v3-snapshot，compileSdk36与运行API34分别记录。恢复旧Ed私钥的独立registry4文件仅进程生命周期骨架，未绑定AAR/Kotlin/Dart或实际恢复；cert4 typedSession另作切片，不能据此打开Recovery/整体ready。

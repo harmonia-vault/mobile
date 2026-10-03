@@ -35,3 +35,7 @@ run = "sh tool/native-build.sh"
 [tasks.test-native-approval]
 description = "仅显式隔离AVD：原生审批到compiled CLI focused验收；先按GO_BRIDGE准备夹具与合成PIN"
 run = 'python3 tool/native-approval-test.py --serial "${HARMONIA_TEST_SERIAL:?须显式选择合成emulator序号}"'
+
+[tasks.test-native-generic]
+description = "仅显式隔离AVD：cert3 Y-only入网/轮换/审批到默认3 compiled CLI；先按V3_NATIVE准备固定快照、夹具与PIN"
+run = 'python3 tool/native-generic-test.py --serial "${HARMONIA_TEST_SERIAL:?须显式选择合成emulator序号}"'

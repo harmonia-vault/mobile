@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 
-/// 显式首根管理设备业务切片，不替换默认关闭gateway或启动UI。
+/// 显式证书版本与来源证明业务切片，不替换默认关闭gateway或启动UI。
 /// 每次调用原生重新系统认证；状态、私钥、随机session不进入Dart。
 class NativeWorkflowAdapter {
   const NativeWorkflowAdapter(this.endpoint);
@@ -113,6 +113,62 @@ class NativeWorkflowAdapter {
   Future<Map<String, Object?>> approvalInfo() => _execute('approvalInfo', {});
   Future<Map<String, Object?>> cancelApproval(String pairingId) =>
       _execute('cancelApproval', {'pairingId': pairingId});
+
+  /// 显式cert3来源证明，不自动降级到首根v2。
+  Future<Map<String, Object?>> approvePairingV3({
+    required String pairingId,
+    required Uint8List shortCode,
+    required List<NativeApprovalSelection> selections,
+  }) => _executeCode('executeApproval', 'approvePairingV3', shortCode, {
+    'pairingId': pairingId,
+    'selections': jsonEncode(selections.map((s) => s.toJson()).toList()),
+  });
+  Future<Map<String, Object?>> retryApprovalV3(String pairingId) =>
+      _execute('retryApprovalV3', {'pairingId': pairingId});
+  Future<Map<String, Object?>> approvalInfoV3() => _execute('approvalInfoV3', {});
+  Future<Map<String, Object?>> cancelApprovalV3(String pairingId) =>
+      _execute('cancelApprovalV3', {'pairingId': pairingId});
+
+  /// 登录及完整PAKE同次系统认证。只有已验检查点、来源账本及同步保存
+  /// 全部完成才出可信view；pending只能以原pairingId恢复。
+  Future<Map<String, Object?>> enrollDeviceV3({
+    required String email,
+    required String password,
+    required String pairingId,
+    required String approverDeviceId,
+    required Uint8List shortCode,
+  }) => _executeCode('executeEnrollment', 'enrollDeviceV3', shortCode, {
+    'email': email,
+    'password': password,
+    'pairingId': pairingId,
+    'approverDeviceId': approverDeviceId,
+  });
+  Future<Map<String, Object?>> resumeEnrollmentV3(String pairingId) =>
+      _execute('resumeEnrollmentV3', {'pairingId': pairingId});
+  Future<Map<String, Object?>> enrollmentInfoV3() =>
+      _execute('enrollmentInfoV3', {});
+  Future<Map<String, Object?>> rotateEnvironmentKey(
+    String environmentId,
+    String id,
+  ) => _execute('rotateEnvironmentKey', {'environmentId': environmentId, 'id': id});
+
+  Future<Map<String, Object?>> _executeCode(
+    String method,
+    String operation,
+    Uint8List shortCode,
+    Map<String, String> intent,
+  ) async {
+    try {
+      return _decode(await _channel.invokeMethod<String>(method, {
+        'command': jsonEncode({
+          'version': 1, 'operation': operation, 'endpoint': endpoint, ...intent,
+        }),
+        'shortCode': shortCode,
+      }));
+    } finally {
+      shortCode.fillRange(0, shortCode.length, 0);
+    }
+  }
 
   Future<Map<String, Object?>> selfRevocationInfo() =>
       _execute('selfRevocationInfo', {});

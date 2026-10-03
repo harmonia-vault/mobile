@@ -62,7 +62,7 @@ class NativeBridgePlugin internal constructor(
                 if (call.arguments != null) { invalid(result); return }
                 runWorker(result) { Mobilebridge.workflowProfile() }
             }
-            "executeApproval" -> {
+            "executeApproval", "executeEnrollment" -> {
                 val args = call.arguments as? Map<*, *>
                 val command = args?.get("command") as? String
                 val incoming = args?.get("shortCode") as? ByteArray
@@ -71,7 +71,7 @@ class NativeBridgePlugin internal constructor(
                     incoming.any { it < 48 || it > 57 }) { incoming?.fill(0); invalid(result); return }
                 // 消费通道传入缓冲；只有短暂原生副本等候本次系统认证，不写JSON或文件。
                 val shortCode = incoming.copyOf(); incoming.fill(0)
-                authenticated(result, create = false, command = command, workflow = true, shortCode = shortCode)
+                authenticated(result, create = false, command = command, workflow = true, shortCode = shortCode, enrollment = call.method == "executeEnrollment")
             }
             "executeWorkflow" -> {
                 val command = call.arguments as? String
@@ -110,7 +110,7 @@ class NativeBridgePlugin internal constructor(
         }
     }
 
-    private fun authenticated(result: MethodChannel.Result, create: Boolean, command: String?, workflow: Boolean = false, shortCode: ByteArray? = null) {
+    private fun authenticated(result: MethodChannel.Result, create: Boolean, command: String?, workflow: Boolean = false, shortCode: ByteArray? = null, enrollment: Boolean = false) {
         if (!store.supported() || Build.VERSION.SDK_INT < 30) {
             clearApproval(shortCode)
             result.error("AUTH_UNAVAILABLE", "需要系统设备密码或强生物认证，当前不能生成或解包设备钥匙。", null)
@@ -167,7 +167,11 @@ class NativeBridgePlugin internal constructor(
                                         activeWorkflow = flow
                                         try {
                                             check(!disposed)
-                                            val response = if (shortCode != null) flow.executeApproval(command, shortCode) else flow.execute(command)
+                                            val response = when {
+                                                shortCode != null && enrollment -> flow.executeEnrollment(command, shortCode)
+                                                shortCode != null -> flow.executeApproval(command, shortCode)
+                                                else -> flow.execute(command)
+                                            }
                                             if (flow.requiresDeviceDeletion()) { store.delete(); protected.delete() }
                                             check(!disposed)
                                             finish(result, response)
