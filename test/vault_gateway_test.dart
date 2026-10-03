@@ -41,7 +41,7 @@ void main() {
     ]) {
       await c.setEndpoint(address);
       expect(c.error, isNotNull);
-      expect(c.endpoint, 'https://vault.example.invalid');
+      expect(c.endpoint, '');
     }
     await c.setEndpoint('https://other.example.invalid:8443/api');
     expect(c.error, isNull);
@@ -51,8 +51,11 @@ void main() {
   });
 
   test('合成预览 CRUD 经接受后拉取生效，删除不改其他环境', () async {
-    final c = VaultController(gateway: SyntheticPreviewGateway());
-    await c.reload();
+    final c = VaultController(
+      gateway: SyntheticPreviewGateway(),
+      allowPreview: true,
+    );
+    await c.enterPreview();
     expect(c.phase, ConnectionPhase.preview);
     final initial = c.checkpoint;
     await c.createEnvironment('测试环境');
@@ -75,8 +78,11 @@ void main() {
   });
 
   test('只读角色不能用控制层绕过界面权限', () async {
-    final c = VaultController(gateway: SyntheticPreviewGateway());
-    await c.reload();
+    final c = VaultController(
+      gateway: SyntheticPreviewGateway(),
+      allowPreview: true,
+    );
+    await c.enterPreview();
     final initial = c.checkpoint;
     await c.setVariable('demo-review', 'LOG_LEVEL', 'debug');
     expect(c.error, contains('角色'));
@@ -90,8 +96,11 @@ void main() {
   });
 
   test('变量校验拒绝非法名称和空字符，快照不变', () async {
-    final c = VaultController(gateway: SyntheticPreviewGateway());
-    await c.reload();
+    final c = VaultController(
+      gateway: SyntheticPreviewGateway(),
+      allowPreview: true,
+    );
+    await c.enterPreview();
     final initial = c.checkpoint;
     await c.setVariable('demo-development', 'BAD-NAME', 'synthetic');
     expect(c.error, isNotNull);
@@ -105,8 +114,8 @@ void main() {
 
   test('接受后拉取失败不乐观修改快照，重查才应用', () async {
     final gateway = RecordingGateway();
-    final c = VaultController(gateway: gateway);
-    await c.reload();
+    final c = VaultController(gateway: gateway, allowPreview: true);
+    await c.enterPreview();
     gateway.failPull = true;
     await c.createEnvironment('仅在服务器接受');
     expect(gateway.accepted, 1);
@@ -122,8 +131,8 @@ void main() {
 
   test('检查点回退被拒绝', () async {
     final gateway = RecordingGateway();
-    final c = VaultController(gateway: gateway);
-    await c.reload();
+    final c = VaultController(gateway: gateway, allowPreview: true);
+    await c.enterPreview();
     await c.createEnvironment('新环境');
     gateway.sequence = 0;
     await c.reload();
@@ -135,8 +144,8 @@ void main() {
 
   test('重复点击在请求运行时不会额外提交', () async {
     final gateway = RecordingGateway();
-    final c = VaultController(gateway: gateway);
-    await c.reload();
+    final c = VaultController(gateway: gateway, allowPreview: true);
+    await c.enterPreview();
     gateway.acceptance = Completer<void>();
     final first = c.createEnvironment('第一个');
     expect(c.busy, isTrue);
@@ -150,7 +159,7 @@ void main() {
 
   test('预览也不模拟可信授权或恢复成功', () async {
     final gateway = RecordingGateway();
-    final c = VaultController(gateway: gateway);
+    final c = VaultController(gateway: gateway, allowPreview: true);
     await c.approveDevice(
       ApprovalDraft(code: '123456', roles: const {}, lifetime: null),
     );
