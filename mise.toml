@@ -47,3 +47,7 @@ run = 'python3 tool/native-management-test.py --serial "${HARMONIA_TEST_SERIAL:?
 [tasks.test-native-recovery]
 description = "隔离AVD连续恢复三进程/原25签包/显式cert4登记与正式CLI4（先准备固定快照、合成PIN与HTTPS）"
 run = 'python3 tool/native-recovery-test.py --serial "${HARMONIA_TEST_SERIAL:?请显式选择隔离AVD}"'
+
+[tasks.test-native-account]
+description = "隔离AVD账号/可信投影/原ID续办三进程（先按ACCOUNT_NATIVE准备固定快照、合成PIN与HTTPS）"
+run = 'python3 tool/native-account-test.py --serial "${HARMONIA_TEST_SERIAL:?须显式选择隔离AVD}"'

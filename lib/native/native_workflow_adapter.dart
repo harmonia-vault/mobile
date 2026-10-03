@@ -11,6 +11,23 @@ class NativeWorkflowAdapter {
 
   Future<Map<String, Object?>> profile() async =>
       _decode(await _channel.invokeMethod<String>('workflowProfile'));
+
+  /// 只验证账号密码，不授设备信任；当次Go随机登录session随Close清除。
+  /// 后续初始化/入网/恢复仍JITLogin，密码不能持久化。
+  Future<Map<String, Object?>> loginAccount(String email, String password) =>
+      _execute('loginAccount', {'email': email, 'password': password});
+
+  /// 新认证后由Go已验View与同步保存成功投影account/gen；公开key或文件header不授trust。
+  Future<Map<String, Object?>> restoreSession() =>
+      _execute('restoreSession', {});
+
+  Future<Map<String, Object?>> businessPendingInfo() =>
+      _execute('businessPendingInfo', {});
+
+  /// 仅原密封ID，不能替换name/value或重新生成意图。
+  Future<Map<String, Object?>> retryBusinessOperation(String id) =>
+      _execute('retryBusinessOperation', {'id': id});
+
   Future<Map<String, Object?>> register(String email, String password) =>
       _execute('register', {'email': email, 'password': password});
   Future<Map<String, Object?>> verifyEmail({
