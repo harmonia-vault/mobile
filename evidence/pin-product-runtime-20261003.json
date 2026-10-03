@@ -1,0 +1,226 @@
+{
+  "scope": "actual MainActivity NativeBridgePlugin JNI to public HTTPS server; not Flutter click flow",
+  "defaultPINWorkflowReady": false,
+  "runtimeManifestSHA256": "bee363d814c2fcbfbd0a7cde9a14e6e5ac95416e40f0ba1f839879fb31f096fe",
+  "publicMobile14": "0caf1d094fbabaa7233902ff7b8cc5559bd93a2e",
+  "publicCore": "b094a933bf1922347b4a41ea8baaa5699ffbf5c1",
+  "publicServer": "bd86fec6215b6f7149234578e7bf5dc764a639c2",
+  "AARsha256": "fb9664f6ccc13707367a12e64f28663fc17018ff4d8bb044ea37d913be2e1d0b",
+  "canonicalCLIsha256": "65db0778666bdc98469e32f774d54e3fb699f4e2b29f9f0e5fb4a32be87745f0",
+  "runs": [
+    {
+      "name": "actual-product-pin",
+      "status": "FAIL",
+      "failure": "PUBLIC_SCOPE_NOT_READY",
+      "phases": [
+        {
+          "phase": "phase1",
+          "status": "PASS",
+          "seconds": 19.711,
+          "rawSHA256": "ace013cd8e96094c030e9a7f233b2745ac37f4da5742a213afae9941273f96df"
+        },
+        {
+          "phase": "phase2",
+          "status": "PASS",
+          "seconds": 9.782,
+          "rawSHA256": "4a80de3c59ed6e640f3a37e974bbc2cb3155250e849c673b123eaef59efc2216"
+        },
+        {
+          "phase": "phase3",
+          "status": "INCOMPLETE/FAIL",
+          "seconds": null
+        }
+      ],
+      "cleanup": {
+        "ownForwardRemoved": true,
+        "org.harmoniavault.harmonia_mobile.productfixture.test": true,
+        "org.harmoniavault.harmonia_mobile.productfixture": true,
+        "baselinePackagesUnchanged": true,
+        "ownEmulatorExit": 0
+      },
+      "resultSHA256": "49f32a9326b9d4ea448981c3f54b6076381f05a38e69cd9873895c67cc459de4"
+    },
+    {
+      "name": "actual-product-pin-diagnostic",
+      "status": "FAIL",
+      "failure": "PeerFailure",
+      "phases": [
+        {
+          "phase": "phase1",
+          "status": "PASS",
+          "seconds": 19.798,
+          "rawSHA256": "d42de7a2a5ae95c74610dc339cdf3658fee3ce3fbe7b756f69b7547fb4ba1650"
+        },
+        {
+          "phase": "phase2",
+          "status": "PASS",
+          "seconds": 10.934,
+          "rawSHA256": "bcd08a74dca322686e269d5cb67a075133ef7b76155d498e04cb16db83230ba8"
+        },
+        {
+          "phase": "phase3",
+          "status": "INCOMPLETE/FAIL",
+          "seconds": null
+        }
+      ],
+      "cleanup": {
+        "cliClosed": true,
+        "ownCLITempRootRemoved": true,
+        "ownForwardRemoved": true,
+        "org.harmoniavault.harmonia_mobile.productfixture.test": true,
+        "org.harmoniavault.harmonia_mobile.productfixture": true,
+        "baselinePackagesUnchanged": true,
+        "ownEmulatorExit": 0
+      },
+      "resultSHA256": "d2805f6871630efab6365453f121f1917257eb40b6fce16e92c9cc0909664f28"
+    },
+    {
+      "name": "actual-product-pin-canonical",
+      "status": "FAIL",
+      "failure": "INSTRUMENTATION_PHASE1_FAILED",
+      "phases": [
+        {
+          "phase": "phase1",
+          "status": "FAIL",
+          "seconds": 8.044,
+          "rawSHA256": "c725d3a8953fbbde4827ef9e8fa58e10a5620be50be43cf2b0e9047476b42310"
+        },
+        {
+          "phase": "phase2",
+          "status": "UNRUN",
+          "seconds": null
+        },
+        {
+          "phase": "phase3",
+          "status": "UNRUN",
+          "seconds": null
+        }
+      ],
+      "cleanup": {
+        "org.harmoniavault.harmonia_mobile.productfixture.test": true,
+        "org.harmoniavault.harmonia_mobile.productfixture": true,
+        "baselinePackagesUnchanged": true,
+        "ownEmulatorExit": 0
+      },
+      "resultSHA256": "3a6bdf1fdb2cfe26d48230c588c621f70cefe0d00f152531f3f59c2fc7b66f82"
+    },
+    {
+      "name": "actual-product-pin-qualified",
+      "status": "PASS",
+      "failure": null,
+      "phases": [
+        {
+          "phase": "phase1",
+          "status": "PASS",
+          "seconds": 19.937,
+          "rawSHA256": "c770265b08e48d35fde3a84cb6e25fbdd3c561831b8dcd8276e4ad5ed1ef5b6e"
+        },
+        {
+          "phase": "phase2",
+          "status": "PASS",
+          "seconds": 9.756,
+          "rawSHA256": "d493fc4b75ade99c8b1de554f33f75cb277f23b0fe0e8ff25b2e8e84ecdd8b0b"
+        },
+        {
+          "phase": "phase3",
+          "status": "PASS",
+          "seconds": 7.754,
+          "rawSHA256": "f1cdcffc70c4f00a0a378dc4e9a1994260769568e75528fea21d41f57a6bdcb1"
+        }
+      ],
+      "cleanup": {
+        "cliClosed": true,
+        "ownCLITempRootRemoved": true,
+        "ownForwardRemoved": true,
+        "org.harmoniavault.harmonia_mobile.productfixture.test": true,
+        "org.harmoniavault.harmonia_mobile.productfixture": true,
+        "baselinePackagesUnchanged": true,
+        "ownEmulatorExit": 0
+      },
+      "cli": {
+        "certificateVersion": 3,
+        "pairCompleted": true,
+        "daemonVerifiedPull": true,
+        "selectedEnvironmentCount": 1,
+        "readVerifiedProductValue": true,
+        "stableIDWriteApplied": true
+      },
+      "resultSHA256": "45a879a61020030e07969566060b3d219ba2013afa2ecbffdb9771340f93a750"
+    }
+  ],
+  "thirdRunFreshSystemCapability": "BLOCKED",
+  "thirdRunHTTPPublicCountersAllZero": true,
+  "noWeakeningOrFakeCapability": true,
+  "remaining": [
+    "actual Flutter PIN input/cancel/forget unrun",
+    "default PIN operations remain closed pending candidate user-flow verification"
+  ],
+  "readOnlyQualification": {
+    "status": "PASS",
+    "seconds": 8.005,
+    "projection": "api=34;deviceSecure=false;combined=11;strong=11;mode=none;deviceExists=false;pinForgetAvailable=false;capability=NO_SYSTEM_AUTH",
+    "rawSHA256": "458e3fe070442131e1905340edd4c4e161715d74e46dfc006eca856d013bef87",
+    "cleanup": {
+      "org.harmoniavault.harmonia_mobile.productfixture.test": true,
+      "org.harmoniavault.harmonia_mobile.productfixture": true,
+      "baselinePackagesUnchanged": true,
+      "ownEmulatorExit": 0
+    },
+    "doesNotCompleteProductFlow": true
+  },
+  "currentRuntimeManifestSHA256": "de2a734dff70a7b033bff3006b4b8ecac351c39a62bd8a30b8f76336b066e35b",
+  "coveredOperations": [
+    "localProtectionInfo",
+    "setupLocalPIN",
+    "forgetLocalPIN",
+    "register",
+    "verifyEmail",
+    "loginAccount",
+    "beginInitialization",
+    "completeInitialization",
+    "restoreSession",
+    "businessPendingInfo",
+    "retryBusinessOperation",
+    "createEnvironment",
+    "renameEnvironment",
+    "deleteEnvironment",
+    "setVariable",
+    "deleteVariable",
+    "approvePairingV3",
+    "retryApprovalV3",
+    "pull"
+  ],
+  "notCoveredOperations": [
+    "queryInitialization",
+    "approvalInfoV3",
+    "cancelApprovalV3",
+    "V4 approval",
+    "mobile recovery",
+    "migration",
+    "rotateEnvironment",
+    "management operations",
+    "PIN logout"
+  ],
+  "qualifiedPublicCounters": {
+    "approvalV3Accepted": 1,
+    "approvalV3Attempts": 1,
+    "bootAccepted": 12,
+    "emailProofAccepted": 1,
+    "emailProofAttempts": 1,
+    "environmentAccepted": 4,
+    "environmentAttempts": 4,
+    "initializationAccepted": 1,
+    "instanceInfo": 0,
+    "loginAccepted": 3,
+    "loginAttempts": 3,
+    "mutationAccepted": 4,
+    "mutationAttempts": 4,
+    "pullAccepted": 41,
+    "registerAccepted": 1,
+    "registerAttempts": 1
+  },
+  "helperCleanup": {
+    "own4453HelperSIGTERM": true,
+    "fixedProgramVerified": "productfixture"
+  }
+}
