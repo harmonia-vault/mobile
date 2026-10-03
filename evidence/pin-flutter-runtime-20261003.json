@@ -1,0 +1,181 @@
+{
+  "profile": "harmonia/actual-flutter-pin-runtime/v1",
+  "date": "2026-10-03",
+  "status": "PASS",
+  "wallSeconds": 40.683,
+  "instrumentationSeconds": 40.365,
+  "source": {
+    "actualMobileBase": "8a0515c374dea6bd29e966e442c804b2222db7a7",
+    "publicationMobileBase": "cc2286272e7d24ee54925f0d8f3db8e486d230e8",
+    "coreBase": "c8b66ac7cc6ee8d10abc834d90ecc4d80be6d774",
+    "serverBase": "bd86fec6215b6f7149234578e7bf5dc764a639c2",
+    "coreChanges": {
+      "mobilebridge/pinprovider.go": "39b171d47473392b0488fbd01588c8e92f21f96a064ca35c622b0ae43e791172",
+      "mobilebridge/pinprovider_test.go": "5d0691a793e54b93143ac3b0810fefbab1832877997a6a4d926ff6b5f63e544c",
+      "mobilebridge/PIN_PROVIDER.md": "5033aa299aab8bb4c86bcf8f089d70395a5713c035f423d6682d2dde87261736"
+    },
+    "mobileChanges": {
+      "lib/native/native_vault_gateway.dart": "6e17562e80904bcd3ae584b3e42ced165bfce234eb82da7b686805b6cf5a8f68",
+      "android/app/src/main/kotlin/org/harmoniavault/harmonia_mobile/nativebridge/NativeBridgePlugin.kt": "57e5b56c504beec95dd3baffcdec00179a590e441736b674efc0282a472a9a2b",
+      "android/app/src/main/kotlin/org/harmoniavault/harmonia_mobile/nativebridge/pinlocal/PinMethodChannelDispatcher.kt": "6bdc21b49ba18e65539abe4a9066c6951b4ffcf7318f71e2d635d874102f3d28",
+      "test/native_pin_adapter_test.dart": "3993d374857625536e5b921b3694083fa0b5df5070b232816a02182a9817c42c"
+    },
+    "fourMobilePublicationBaseSameAsActualBase": true
+  },
+  "qualification": {
+    "mode": "none",
+    "systemCapability": "NO_SYSTEM_AUTH",
+    "deviceExists": false,
+    "pinForgetAvailable": false,
+    "attempt": 1,
+    "classifier": "production classifier; no capability injection; system PIN and clock unchanged"
+  },
+  "scope": "actual C Flutter widgets for PIN setup/input/variable/forget; account and vault initialization bootstrap uses the same UI-generated protected device and mature real HTTPS double signatures; no injected trusted/cache",
+  "verifiedStages": [
+    "UI_DOUBLE_SETUP_COMMITTED",
+    "REAL_NATIVE_GENESIS_ACCEPTED",
+    "WRONG_PIN_NO_HTTP_WRITE",
+    "CORRECT_PIN_ONE_VERIFIED_WRITE",
+    "UI_FORGET_LOCAL_KEYS_CLEARED",
+    "FRESH_IDENTITY_NOT_TRUSTED"
+  ],
+  "formalPINFinalCleanup": true,
+  "wrongPINWriteRequests": 0,
+  "wrongPINAcceptedWrites": 0,
+  "correctPINWriteRequests": 1,
+  "correctPINAcceptedWrites": 1,
+  "verifiedValueViaSamePull": true,
+  "freshIdentity": "NOT_TRUSTED",
+  "publicCounters": {
+    "approvalV3Accepted": 0,
+    "approvalV3Attempts": 0,
+    "bootAccepted": 4,
+    "emailProofAccepted": 1,
+    "emailProofAttempts": 1,
+    "environmentAccepted": 1,
+    "environmentAttempts": 1,
+    "initializationAccepted": 1,
+    "instanceInfo": 1,
+    "loginAccepted": 2,
+    "loginAttempts": 2,
+    "mutationAccepted": 1,
+    "mutationAttempts": 1,
+    "pullAccepted": 10,
+    "registerAccepted": 1,
+    "registerAttempts": 1
+  },
+  "cleanup": {
+    "org.harmoniavault.harmonia_mobile.productfixture.test": true,
+    "org.harmoniavault.harmonia_mobile.productfixture": true,
+    "baselinePackagesUnchanged": true,
+    "ownEmulatorExit": 0,
+    "syntheticFixtureStopped": true,
+    "AVDPreserved": true,
+    "existing5580Untouched": true,
+    "normalLiveAARUnmodified": true
+  },
+  "artifacts": {
+    "candidateAAR": "f943c4c207a79ce5e0fc2091a7b58aa13f83e7421012d3176041c85a6ef3e5fc",
+    "mainAPK": "aaa5be2edb2c651f32d4d777dda03bb9924caeb4d0a54db50241250b4080871d",
+    "testAPK": "e57bbebd60b892a4b72980306072c00128e765df4daac7d5b75ede0b48eb3c64",
+    "rawInstrumentation": "c7f9818e5172e780b90151d6a7fdd56603bd5f62fe98ea789395bf929a8e71fd",
+    "runtime27InputManifest": "ec4f58f84868ca751426516730b5deffe2a2c39fd0759a048c3e6bdaef5d4abf",
+    "candidateGoFreeze": "582d96cc5ef10957d692517f391c5a2ef75529ce588ea401143646f4611d8df6"
+  },
+  "checks": {
+    "goNativePINRace": {
+      "main": 8,
+      "sub": 6,
+      "status": "PASS",
+      "packageSeconds": 16.129,
+      "processSeconds": 23.511
+    },
+    "goVet": {
+      "status": "PASS",
+      "seconds": 3.569
+    },
+    "candidateAAR": {
+      "status": "PASS",
+      "seconds": 5.326
+    },
+    "appBuild": {
+      "status": "PASS",
+      "seconds": 11.874
+    },
+    "dartAnalyze": {
+      "status": "PASS",
+      "seconds": 5.027
+    },
+    "dartTests": {
+      "passed": 90,
+      "status": "PASS",
+      "seconds": 8.125
+    }
+  },
+  "historicalActualFlutterRuns": [
+    {
+      "run": 1,
+      "status": "FAIL",
+      "wallSeconds": 14.046,
+      "rawSHA256": "588bf187c04c108196576a5f8d98c552ea0552c329ded06d531023e6a470962c",
+      "cause": "native metadata rejected after setup; original fixed rejection code was not captured; later BUSY observation led bounded read-only completion wait"
+    },
+    {
+      "run": 2,
+      "status": "FAIL",
+      "wallSeconds": 9.639,
+      "rawSHA256": "8afa4d8d19902e5deec92d74c7c0419efce6c03885a999ea1f98578bf8eca775",
+      "cause": "real own PIN residual; strict fresh-slot gate stopped"
+    },
+    {
+      "run": 3,
+      "status": "FAIL",
+      "wallSeconds": 38.247,
+      "rawSHA256": "745d3b9d6af7b075dcaeb6af41bcbf18b7025285e8c540d7ae9ce236afc4044c",
+      "cause": "driver omitted independent PIN prompts for pending metadata and pull"
+    },
+    {
+      "run": 4,
+      "status": "FAIL",
+      "wallSeconds": 24.259,
+      "rawSHA256": "445e060f5ad0c1b147d5b9b7eef77e719fe88d0be1bc50f1f28f4cfe54645c0d",
+      "cause": "driver used previous Flutter PIN dialog node during navigation"
+    },
+    {
+      "run": 5,
+      "status": "FAIL",
+      "wallSeconds": 44.852,
+      "rawSHA256": "7e653d7fd5094a751a72cf9792616c35b42a35b703491ab32cf536f213944c37",
+      "cause": "real preflight wrong PIN JNI error classified as PIN_BLOCKED; exact ErrPIN fix in sixth run"
+    }
+  ],
+  "verifiedPINOperations": [
+    "register",
+    "verifyEmail",
+    "loginAccount",
+    "beginInitialization",
+    "completeInitialization",
+    "restoreSession",
+    "businessPendingInfo",
+    "retryBusinessOperation",
+    "createEnvironment",
+    "renameEnvironment",
+    "deleteEnvironment",
+    "setVariable",
+    "deleteVariable",
+    "approvePairingV3",
+    "retryApprovalV3",
+    "pull"
+  ],
+  "operationEvidence": "sixteen-operation list uses separate actual MainActivity native runtime evidence in pin-product-runtime-20261003.json; this Flutter run proves only the stages above",
+  "notVerifiedHere": [
+    "Flutter registration and complete recovery-code wizard",
+    "Flutter CLI approval screen",
+    "PIN recovery and process recovery owner",
+    "PIN OS-auth upgrade migration",
+    "PIN v4/v5 approval and repeated recovery",
+    "iOS PIN complete product path",
+    "production deployment/security certification"
+  ],
+  "safety": "PIN proves local material access only; device/account trust still comes from protected signed receipts and verified source ledger; realVaultReady remains false; default experimental opt-in remains required; candidate capabilities do not authorize cloud access"
+}

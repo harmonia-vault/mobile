@@ -187,7 +187,7 @@ class NativeVaultGateway
          verifiedNativeOperations ?? _nativeEvidence,
        ),
        _verifiedPINOperations = Set.unmodifiable(
-         verifiedPINOperations ?? const {},
+         verifiedPINOperations ?? _pinEvidence,
        ),
        _now = now ?? DateTime.now,
        _inspector = inspector ?? inspectHarmoniaInstance;
@@ -234,6 +234,26 @@ class NativeVaultGateway
     'approvalInfoV4',
     'cancelApprovalV4',
     'logout',
+  };
+  // 逐项来自实际 MainActivity PIN/JNI/HTTPS/CLI3 纵链；不是设备可信声明。
+  // V4、恢复、迁移、轮换、管理及未实测查询/取消保持关闭。
+  static const _pinEvidence = {
+    'register',
+    'verifyEmail',
+    'loginAccount',
+    'beginInitialization',
+    'completeInitialization',
+    'restoreSession',
+    'businessPendingInfo',
+    'retryBusinessOperation',
+    'createEnvironment',
+    'renameEnvironment',
+    'deleteEnvironment',
+    'setVariable',
+    'deleteVariable',
+    'approvePairingV3',
+    'retryApprovalV3',
+    'pull',
   };
   Set<String> _runtimeOperations = const {};
   final Set<String> _inspected = {};

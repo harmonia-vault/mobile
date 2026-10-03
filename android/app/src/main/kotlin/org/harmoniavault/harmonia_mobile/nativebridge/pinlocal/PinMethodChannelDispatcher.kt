@@ -114,7 +114,9 @@ internal class PinMethodChannelDispatcher(
             return mapOf("version" to 1, "profile" to "harmonia/local-protection/v1", "mode" to mode,
                 "systemCapability" to verdict.name, "deviceExists" to (system || hasPIN),
                 "pinSetupAvailable" to (!system && !hasPIN && verdict == PinSystemVerdict.NO_SYSTEM_AUTH),
-                "upgradeRequired" to upgrade, "pinWorkflowReady" to false, "delaySeconds" to delay,
+                "upgradeRequired" to upgrade,
+                "pinWorkflowReady" to (hasPIN && !system && !upgrade && verdict == PinSystemVerdict.NO_SYSTEM_AUTH),
+                "delaySeconds" to delay,
                 "pinForgetAvailable" to (hasPIN && !system))
         } catch (failure: Exception) {
             retireOwners()

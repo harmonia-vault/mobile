@@ -152,7 +152,7 @@ void main() {
       channel,
       (call) async => status(mode: 'pin', exists: true, ready: true),
     );
-    final value = await gateway(port);
+    final value = await gateway(port, pinEvidence: const {});
     await value.refreshLocalProtection();
     expect(value.localProtectionStatus!.mode, LocalProtectionMode.pin);
     expect(value.capabilities, isEmpty);

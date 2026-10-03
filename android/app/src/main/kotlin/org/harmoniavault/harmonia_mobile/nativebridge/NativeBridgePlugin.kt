@@ -71,7 +71,8 @@ class NativeBridgePlugin internal constructor(
                     result.success(mapOf("version" to 1, "goCore" to true,
                         "systemStrongAuthentication" to (!pinExists && store.supported()), "protectedDeviceExists" to store.exists(),
                         "appPINDeviceExists" to pinExists,
-                        "appPINWorkflowReady" to false,
+                        // 仅表示PIN业务ABI已接入；资格/受保护状态/逐项证据仍另行检查。
+                        "appPINWorkflowReady" to true,
                         "realVaultReady" to false, "softwareDeviceKeys" to true))
                 } catch (_: Exception) { recoveryRegistry.clear(); result.error("LOCAL_PROTECTION_STATE", "本机保护状态不可用。", null) }
             }
