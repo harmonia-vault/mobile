@@ -30,6 +30,7 @@ class NativeBridgePlugin internal constructor(
     // 仅内部原生构造器的合成故障注入；默认空，通道不能设置，接收的仍只有AES密文。
     private val beforeWorkflowPacketSave: (ByteArray) -> Unit = {},
     private val beforeWorkflowSave: () -> Unit = {},
+    private val productFixture: ProductFixtureConfiguration? = null,
 ) : MethodChannel.MethodCallHandler {
     private val channel = MethodChannel(messenger, "org.harmoniavault/native/v1")
     private val worker = Executors.newSingleThreadExecutor()
@@ -42,11 +43,19 @@ class NativeBridgePlugin internal constructor(
     @Volatile private var activeWorkflow: VaultWorkflow? = null
     @Volatile private var pendingShortCode: ByteArray? = null
 
-    init { channel.setMethodCallHandler(this) }
+    init {
+        check(productFixture == null || additionalCA.contentEquals(productFixture.publicCA()))
+        channel.setMethodCallHandler(this)
+    }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         if (disposed) { result.error("LOCKED", "原生桥已关闭。", null); return }
         when (call.method) {
+            "fixtureConnectionInfo" -> {
+                if (call.arguments != null) { invalid(result); return }
+                val fixture = productFixture
+                if (fixture == null) result.notImplemented() else result.success(fixture.attestation())
+            }
             "capabilities" -> {
                 if (call.arguments != null) { invalid(result); return }
                 result.success(mapOf("version" to 1, "goCore" to true,
@@ -73,6 +82,7 @@ class NativeBridgePlugin internal constructor(
                 if (args == null || args.keys != setOf("command", "shortCode") || command == null ||
                     command.toByteArray(Charsets.UTF_8).size > 32768 || incoming == null || incoming.size != 8 ||
                     incoming.any { it < 48 || it > 57 }) { incoming?.fill(0); invalid(result); return }
+                if (!acceptsWorkflowEndpoint(command)) { incoming.fill(0); invalid(result); return }
                 // 消费通道传入缓冲；只有短暂原生副本等候本次系统认证，不写JSON或文件。
                 val shortCode = incoming.copyOf(); incoming.fill(0)
                 authenticated(result, create = false, command = command, workflow = true, shortCode = shortCode, enrollment = call.method == "executeEnrollment")
@@ -80,6 +90,7 @@ class NativeBridgePlugin internal constructor(
             "executeWorkflow" -> {
                 val command = call.arguments as? String
                 if (command == null || command.toByteArray(Charsets.UTF_8).size > 32768) { invalid(result); return }
+                if (!acceptsWorkflowEndpoint(command)) { invalid(result); return }
                 authenticated(result, create = false, command = command, workflow = true)
             }
             "executeUnlocked" -> {
@@ -90,6 +101,11 @@ class NativeBridgePlugin internal constructor(
             else -> result.notImplemented()
         }
     }
+
+    private fun acceptsWorkflowEndpoint(command: String): Boolean = productFixture?.let { fixture ->
+        try { fixture.acceptsEndpoint(JSONObject(command).getString("endpoint")) }
+        catch (_: Exception) { false }
+    } ?: true
 
     private fun invalid(result: MethodChannel.Result) = result.error("INVALID_COMMAND", "原生业务请求不符合协议。", null)
     private fun acquire(result: MethodChannel.Result): Boolean {
