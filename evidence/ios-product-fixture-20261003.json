@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "date": "2026-10-03",
+  "baseMobile": "9e0a00b81ebe08b203d79ee246b434412c5a67fb",
+  "baseServer": "bd86fec6215b6f7149234578e7bf5dc764a639c2",
+  "runtime": "iOS 27.0 arm64 Simulator",
+  "bundleIdentifier": "org.harmoniavault.ios.productfixture",
+  "endpoint": "https://127.0.0.1:5593",
+  "sources": {
+    "ios/Runner/NativeBridge/ProductFixtureConfiguration.swift": "a6a3d14acd1046a6c4dbb207e983527f89b134599714f7b14b7573f07370101d",
+    "ios/Runner/NativeBridge/NativeBridgePlugin.swift": "d3b0c61fe82b6c17f4a5d6b9366743390fdebf0f146371424f837267138e8a67",
+    "ios/Runner.xcodeproj/project.pbxproj": "48b9c14c83f2f9dcb430108d5f61b057ae3adc283c84f18a106012075c40cbc1",
+    "ios/NativeSecurityTests/ProductFixtureConfigurationTests.swift": "e6f2f27bfda95960eecfded94935b91c2e9a8afc904f2a67de6ec43e2fb0ed08",
+    "ios/NativeSecurityTests/ProductFixtureGateHarness.swift": "e01f025befbba450ebeadc792608e99b84443b4716d230dffa90d6522492917d",
+    "tool/ios-product-fixture-build.sh": "020060d14dfe806926b2a9c2b0bbe672f7187b340a53fb994462de9073e8ae92",
+    "tool/ios-product-fixture-gate-test.sh": "94e9778d79a8444f3bf59682af3cb78d215f759092da38d0bbc167bd3bdd4b47"
+  },
+  "component": {
+    "valid": 1,
+    "negativeRejected": 11,
+    "endpointGuard": 4,
+    "scope": [
+      "decodeResource",
+      "acceptsWorkflow"
+    ]
+  },
+  "fromBundleSimulator": [
+    {
+      "actual": "disabled",
+      "authenticationInvoked": false,
+      "expected": "disabled",
+      "result": "PASS",
+      "runID": "54BFE7A8-480D-4A19-B8B1-6744C98D59F7",
+      "test": "fromBundle",
+      "version": 1,
+      "case": "ordinary-empty",
+      "binarySHA256": "75f15b244950d1f28237ec46ed27da30a6cda656bbeb714bd07cc389cfb90e98"
+    },
+    {
+      "actual": "rejected",
+      "authenticationInvoked": false,
+      "expected": "rejected",
+      "result": "PASS",
+      "runID": "0278EB3D-523A-4D97-A7A7-E229208387AB",
+      "test": "fromBundle",
+      "version": 1,
+      "case": "ordinary-resource",
+      "binarySHA256": "c1bee7a0077d08f5770863bdb520c12eb4fce63352eaec698a35959ecc7fc9e9"
+    },
+    {
+      "actual": "rejected",
+      "authenticationInvoked": false,
+      "expected": "rejected",
+      "result": "PASS",
+      "runID": "A52339EF-2059-4CD2-9512-2DF5A80C7C68",
+      "test": "fromBundle",
+      "version": 1,
+      "case": "debug-wrong-bundle",
+      "binarySHA256": "0ceb4698773e6dc65b440b2dd1283f32df03165254f71034b1cd31a95a8781d4"
+    }
+  ],
+  "productConnection": {
+    "result": "PASS",
+    "scope": "实际现有 Flutter 原生初始化、fixtureConnectionInfo、标准 HTTPS 到空实例，进入创建账号页；账号尚未提交",
+    "screenshotSHA256": "00d257c1f99d977de2ece00e17db33c030f41b0030d7a059f5892e9654c8a1cb",
+    "instanceInfoRequests": 1,
+    "registrationAttempts": 0,
+    "loginAttempts": 0,
+    "deviceTrustGranted": false
+  },
+  "builds": {
+    "debugSimulator": {
+      "result": "PASS",
+      "binarySHA256": "44b3223d1b21cf257575e5d5b21b1778a91654fbf38aae51286648fc3b3c5d61",
+      "logSHA256": "524f47bc3197dd9ca57e7f9757fda7de58ac770fcd33d1cc2fea728a1e6577c6",
+      "fixtureResourcePresent": true
+    },
+    "unsignedReleaseIPhoneOS": {
+      "result": "PASS",
+      "binarySHA256": "ba42ee4d97408ba2b2de521a5948e2f5dfa1128d1fd266d72a494331e45fc492",
+      "logSHA256": "23e049af411fae953692e3a108bdd48ead3f6025f7fc0d9e958610c80693bcce",
+      "fixtureResourcePresent": false
+    }
+  },
+  "unrun": [
+    "账号注册",
+    "邮件证明",
+    "账号登录",
+    "首台设备初始化",
+    "审批与管理操作",
+    "真机硬件因素"
+  ],
+  "limitations": [
+    "没有伪造 LA 结果或设备信任",
+    "官方模拟认证历史两项 PASS 属独立证据，不计入本轮产品流程",
+    "测试初版缺 Scene 生命周期导致启动失败，修正测试入口后实际重跑通过"
+  ],
+  "testLogSHA256": "db41d83504b24b75f8bf55448629a82909ff03288f679f82e6d1c77272204125"
+}

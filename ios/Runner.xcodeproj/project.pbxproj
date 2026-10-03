@@ -21,6 +21,7 @@
 		7C94D5D48ADE425F7582B98F /* NativeBridgePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B625593FE8619E078A1628B8 /* NativeBridgePlugin.swift */; };
 		A78174055319386605FCAC84 /* Mobilebridge.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A75174055319386605FCAC84 /* Mobilebridge.xcframework */; };
 		D4FB06E72CC773B6EFFD397F /* LocalPINSlot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5499538FF130A7AA46A888CC /* LocalPINSlot.swift */; };
+		41E5AEF3A58FA69E9BB44657 /* ProductFixtureConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7E1437193B605ADD5D9E744 /* ProductFixtureConfiguration.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -61,6 +62,7 @@
 		B625593FE8619E078A1628B8 /* NativeBridgePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeBridge/NativeBridgePlugin.swift; sourceTree = "<group>"; };
 		A75174055319386605FCAC84 /* Mobilebridge.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = Mobilebridge.xcframework; path = ../build/native/Mobilebridge.xcframework; sourceTree = SOURCE_ROOT; };
 		5499538FF130A7AA46A888CC /* LocalPINSlot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeBridge/LocalPINSlot.swift; sourceTree = "<group>"; };
+		B7E1437193B605ADD5D9E744 /* ProductFixtureConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeBridge/ProductFixtureConfiguration.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -118,6 +120,7 @@
 				86C2FB6C59E9CEF3D2BF537F /* SystemAuthentication.swift */,
 				F722D01D49F97C6052E9666D /* ProtectedDeviceStore.swift */,
 				E6D78C9E891BE2522E6E3A5F /* ProtectedWorkflowStore.swift */,
+				B7E1437193B605ADD5D9E744 /* ProductFixtureConfiguration.swift */,
 				B625593FE8619E078A1628B8 /* NativeBridgePlugin.swift */,
 				5499538FF130A7AA46A888CC /* LocalPINSlot.swift */,
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
@@ -246,6 +249,7 @@
 				D34FB79A3028A12205D20799 /* SystemAuthentication.swift in Sources */,
 				626DE2026A09F4FB463C1061 /* ProtectedDeviceStore.swift in Sources */,
 				4F047A75CB23D28211D6246B /* ProtectedWorkflowStore.swift in Sources */,
+				41E5AEF3A58FA69E9BB44657 /* ProductFixtureConfiguration.swift in Sources */,
 				7C94D5D48ADE425F7582B98F /* NativeBridgePlugin.swift in Sources */,
 				D4FB06E72CC773B6EFFD397F /* LocalPINSlot.swift in Sources */,
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,

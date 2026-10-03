@@ -11,6 +11,7 @@ final class NativeBridgePlugin: NSObject, FlutterPlugin {
   private let bundleID: String
   private let store: ProtectedDeviceStore
   private let directory: URL
+  private let productFixture: ProductFixtureConfiguration?
   private let registry: MobilebridgeRecoveryRegistry
   private var busy = false
   private var epoch: UInt64 = 0
@@ -26,6 +27,7 @@ final class NativeBridgePlugin: NSObject, FlutterPlugin {
 
   init(configuration: Void) throws {
     guard let identifier = Bundle.main.bundleIdentifier else { throw NativeSecurityFailure("LOCKED") }
+    productFixture = try ProductFixtureConfiguration.fromBundle()
     bundleID = identifier
     store = ProtectedDeviceStore(bundleIdentifier: identifier)
     directory = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
@@ -40,6 +42,10 @@ final class NativeBridgePlugin: NSObject, FlutterPlugin {
 
   func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
+    case "fixtureConnectionInfo":
+      guard call.arguments == nil else { reject(result, "INVALID_COMMAND"); return }
+      guard let productFixture else { result(FlutterMethodNotImplemented); return }
+      result(productFixture.attestation)
     case "capabilities":
       guard call.arguments == nil else { reject(result, "INVALID_COMMAND"); return }
       do {
@@ -117,6 +123,10 @@ final class NativeBridgePlugin: NSObject, FlutterPlugin {
 
   private func authenticated(_ result: @escaping FlutterResult, create: Bool, command: String?,
       workflow: Bool = false, shortCode: Data? = nil, enrollment: Bool = false) {
+    // 包括 workflow / approval / enrollment，先限制完整意图的 endpoint，再开始认证。
+    if workflow, let productFixture, !productFixture.acceptsWorkflow(command) {
+      reject(result, "INVALID_COMMAND"); return
+    }
     guard SystemAuthentication.probe() == .ready else { reject(result, "AUTH_UNAVAILABLE"); return }
     let token: UInt64
     do { token = try acquire() } catch { reject(result, "BUSY"); return }
@@ -171,7 +181,7 @@ final class NativeBridgePlugin: NSObject, FlutterPlugin {
       var state = try protected.load()
       defer { state.resetBytes(in: 0..<state.count) }
       let flow = try device.openWorkflow(endpoint, namespace: protected.namespace, sealed: state,
-          additionalCA: Data(), store: protected)
+          additionalCA: productFixture?.publicCA ?? Data(), store: protected)
       mutex.lock(); activeWorkflow = flow; mutex.unlock()
       defer { mutex.lock(); activeWorkflow = nil; mutex.unlock(); flow.close() }
       guard isActive(token) else { throw NativeSecurityFailure("LOCKED") }
