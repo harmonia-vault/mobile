@@ -1,0 +1,316 @@
+{
+  "version": 1,
+  "evidenceAtUTC": "2026-10-03T12:15:51.740256+00:00",
+  "overallHarnessResult": "FAIL",
+  "coreProductLoop": "PASS",
+  "failedFinalStep": "finalTrustedLocalLogout -> awaitSystemCredential SELECTOR_UNAVAILABLE; logout completion not proven",
+  "seconds": 149.966,
+  "actualSystemCredentialWindows": 34,
+  "stages": {
+    "realHTTPSConnectionAndEmptyInstance": "PASS",
+    "registerEmailProofNormalLoginUntrusted": "PASS",
+    "fullRecoveryCodeReentryFirstInitialization": "PASS",
+    "matureBootVerifiedPullActualEnvironmentList": "PASS",
+    "selectedCSettingsNavigation": "PASS",
+    "variableCreateEditDeleteRecreate": "PASS",
+    "environmentCreateRenameDelete": "PASS",
+    "realAndroidApprovalOfDefault3CompiledCLI": "PASS",
+    "CLIDoubleSignatureCompleteDaemonBootVerifiedPull": "PASS",
+    "CLIReadAppWrittenValueStableIDRWWrite": "PASS",
+    "originalPairingIDAppRetryAndActualCLINameVisible": "PASS",
+    "finalTrustedLocalLogout": "UNCONFIRMED"
+  },
+  "rawPublicStageAndCounters": {
+    "phase": "actualFlutterAccount",
+    "status": "FAIL",
+    "stage": "finalTrustedLocalLogout",
+    "initialization": "PASS",
+    "CRUD": "PASS",
+    "CLI": "PASS",
+    "credentialInputFrames": 34,
+    "beforeCounters": {
+      "approvalV3Accepted": 0,
+      "approvalV3Attempts": 0,
+      "bootAccepted": 0,
+      "emailProofAccepted": 0,
+      "emailProofAttempts": 0,
+      "environmentAccepted": 0,
+      "environmentAttempts": 0,
+      "initializationAccepted": 0,
+      "instanceInfo": 1,
+      "loginAccepted": 0,
+      "loginAttempts": 0,
+      "mutationAccepted": 0,
+      "mutationAttempts": 0,
+      "pullAccepted": 0,
+      "registerAccepted": 0,
+      "registerAttempts": 0
+    },
+    "SDKSecureVerified": true,
+    "afterCounters": {
+      "approvalV3Accepted": 0,
+      "approvalV3Attempts": 0,
+      "bootAccepted": 0,
+      "emailProofAccepted": 1,
+      "emailProofAttempts": 1,
+      "environmentAccepted": 0,
+      "environmentAttempts": 0,
+      "initializationAccepted": 0,
+      "instanceInfo": 2,
+      "loginAccepted": 1,
+      "loginAttempts": 1,
+      "mutationAccepted": 0,
+      "mutationAttempts": 0,
+      "pullAccepted": 0,
+      "registerAccepted": 1,
+      "registerAttempts": 1
+    },
+    "accountStatus": "PASS",
+    "initializationAfterCounters": {
+      "approvalV3Accepted": 0,
+      "approvalV3Attempts": 0,
+      "bootAccepted": 2,
+      "emailProofAccepted": 1,
+      "emailProofAttempts": 1,
+      "environmentAccepted": 1,
+      "environmentAttempts": 1,
+      "initializationAccepted": 1,
+      "instanceInfo": 2,
+      "loginAccepted": 3,
+      "loginAttempts": 3,
+      "mutationAccepted": 0,
+      "mutationAttempts": 0,
+      "pullAccepted": 5,
+      "registerAccepted": 1,
+      "registerAttempts": 1
+    },
+    "CSettingsNavigation": "PASS",
+    "variableCreateEdit": "PASS",
+    "variableDelete": "PASS",
+    "CRUDCounters": {
+      "approvalV3Accepted": 0,
+      "approvalV3Attempts": 0,
+      "bootAccepted": 16,
+      "emailProofAccepted": 1,
+      "emailProofAttempts": 1,
+      "environmentAccepted": 4,
+      "environmentAttempts": 4,
+      "initializationAccepted": 1,
+      "instanceInfo": 2,
+      "loginAccepted": 3,
+      "loginAttempts": 3,
+      "mutationAccepted": 4,
+      "mutationAttempts": 4,
+      "pullAccepted": 38,
+      "registerAccepted": 1,
+      "registerAttempts": 1
+    },
+    "CLIResult": {
+      "certificateVersion": 3,
+      "pairCompleted": true,
+      "daemonVerifiedPull": true,
+      "selectedEnvironmentCount": 1,
+      "readVerifiedProductValue": true,
+      "stableIDWriteApplied": true
+    },
+    "CLIWriteVisibleInActualApp": "PASS",
+    "error": "SELECTOR_UNAVAILABLE",
+    "lastPublicDriverAction": {
+      "operation": "awaitSystemCredential"
+    },
+    "CLIOwnedCleanup": true,
+    "officialClearShellExit": 0,
+    "forwardRemoved": true,
+    "SDKFinallyNoSecureVerified": true,
+    "explicitCredentialClearVerified": true,
+    "finalCounters": {
+      "approvalV3Accepted": 1,
+      "approvalV3Attempts": 1,
+      "bootAccepted": 21,
+      "emailProofAccepted": 1,
+      "emailProofAttempts": 1,
+      "environmentAccepted": 4,
+      "environmentAttempts": 4,
+      "initializationAccepted": 1,
+      "instanceInfo": 2,
+      "loginAccepted": 4,
+      "loginAttempts": 4,
+      "mutationAccepted": 5,
+      "mutationAttempts": 5,
+      "pullAccepted": 74,
+      "registerAccepted": 1,
+      "registerAttempts": 1
+    }
+  },
+  "runtime": {
+    "seconds": 149.966,
+    "hostExitCode": 0,
+    "originalPreviewSHA256Before": "4d3efb2d745734664a28f1725855eb73da8b963f5bfea2884668de0a88611c66",
+    "originalPreviewSHA256After": "4d3efb2d745734664a28f1725855eb73da8b963f5bfea2884668de0a88611c66",
+    "originalPreviewPreserved": true,
+    "driverDiagnostic": "fixed-driver-diagnostic.json"
+  },
+  "fixedDiagnosticSHA256": "166dc94f5f79728c01e3d855e7493423af6723a833b2ddc7f27becb732f40805",
+  "rawResultSHA256": "c513a7f8e4849c950950eef8b6651f027223f6f4abca3016bfc20ae19b41e5f9",
+  "cleanupSHA256": "fbd935107631c5cc2b724a87ebbb40bc84863952793060f700e5d00341cfac02",
+  "previewOnlyTests": {
+    "navigation": {
+      "seconds": 7.144,
+      "frames": 32
+    },
+    "checkedState": {
+      "seconds": 7.305,
+      "frames": 33
+    },
+    "notProductAuthorizationEvidence": true
+  },
+  "limits": [
+    "System device credential on isolated Android API34; compileSdk36 is not runtime36",
+    "Experimental productfixture debug APK with exact temporary public CA; default/release fixture absent",
+    "No PIN fallback, Recovery/V4, Windows, iOS or current whole HEAD coverage claimed",
+    "Whole realVaultReady remains false; cold approval source without verified version stays closed",
+    "Physical fixture/package cleanup is distinct from unproven final product logout",
+    "No screenshots, PIN/password/proof/PAKE code/private key/raw protected state in evidence"
+  ],
+  "inputs": {
+    "mobileSourceBase": "ac1e872ce138ee8000837a24141ad8900200c8c7",
+    "androidDartPublicEquivalent": "8a0515c374dea6bd29e966e442c804b2222db7a7",
+    "productionFiles": {
+      "lib/ui/harmonia_app.dart": "a5e22f7ef45af793019497e75bc1459f9f1d0e9fe3cd7d7a7f3eed1a5c0195f0",
+      "lib/vault_controller.dart": "40daa50302109001b299aa5246a6e3d855d4e143491750a6272cff8dec74cd07",
+      "test/sensitive_form_lifecycle_test.dart": "18c5d6783e3069c96b7d664b9953a8ce8c3fd3c526a7970e3435ee2134b1b8b5"
+    },
+    "corePublicBase": "b094a933bf1922347b4a41ea8baaa5699ffbf5c1",
+    "serverPublicBase": "bd86fec6215b6f7149234578e7bf5dc764a639c2",
+    "normalAARsha256": "fb9664f6ccc13707367a12e64f28663fc17018ff4d8bb044ea37d913be2e1d0b",
+    "CLIsha256": "65db0778666bdc98469e32f774d54e3fb699f4e2b29f9f0e5fb4a32be87745f0",
+    "finiteTLSHelperSHA256": "2aa7463c28e3470766922683b595a8c8d3ed9b0343da43676f6ba39c096dafe3",
+    "sourceManifestSHA256": "18a603cdb47b89cfbb80359bdf9aacb8c96a7f1cd592a8d65804d2705f19f93b",
+    "formManifestSHA256": "3f9d97e87c468c8c50d6d44c8708b8d2e2a5f42b7ccfd65c7003592529ea9c25",
+    "appArtifact": "harmonia-form-productfixture-debug.apk",
+    "appSHA256": "affeb86800b6c5fb0f9d7de3d3c9e0e0a8d94e42f012e52cd7debb7672ac57ee",
+    "testArtifact": "harmonia-form-productqa-test.apk",
+    "testSHA256": "354da057e06453e7bc225b911f9898018dfb283465e4a25323adec857a031f0b",
+    "fixturePort": 4461,
+    "fixturePublicConfigSHA256": "50e45faaf9cff1a9452397a6973730d0de8d72c9919ab04d5609267d9603af5f",
+    "QAoverlays": {
+      "ProductQaCommand.kt": "10588a1177af6bcd817e8f10ad9f325a2d7de68b4cfc5fa1242eb6f5de7720e2",
+      "NativeProductUiDriverTest.kt": "85b49a472e4104ede9f607966b129fbfc2859a5cbee1ca7801c596f92d33ffc6",
+      "ProductSystemCredentialFixture.kt": "830c2dbd710a9842423eb0ec14fb276cdbc2dd588cafce51b9ad792ae9d366ed"
+    },
+    "hostSHA256": "70f5d4bf921b2e5213351fb9540cfbff82f91dd925f14487a8ca13890083e92b",
+    "peerSHA256": "60e0d82a32f5688feeed4655912c32b43311c4db4820f439372f53d456237b0f",
+    "planManifestSHA256": "9e8c28869e83d86c1ea68caa221c931ddc13bcde43e3617c64070620bda67766",
+    "privateRuntimeManifestSHA256": "e2f4d0991e8e550ab212f9f1a8640e74f959c8de76c1553e482f3a6a02540ef6",
+    "productionSourcesRestored": true
+  },
+  "cleanup": {
+    "scope": "own productfixture packages and exact tracked synthetic fixture processes only; keep original preview/AVD/cached evidence",
+    "SDKNoSecureConfirmedByActualFinally": true,
+    "packages": {
+      "org.harmoniavault.harmonia_mobile.productfixture.test": {
+        "wasPresent": true,
+        "uninstalledOrAbsent": true
+      },
+      "org.harmoniavault.harmonia_mobile.productfixture": {
+        "wasPresent": true,
+        "uninstalledOrAbsent": true
+      }
+    },
+    "previewBeforeSHA256": "4d3efb2d745734664a28f1725855eb73da8b963f5bfea2884668de0a88611c66",
+    "previewAfterSHA256": "4d3efb2d745734664a28f1725855eb73da8b963f5bfea2884668de0a88611c66",
+    "previewPreserved": true,
+    "AVDStillDevice": true,
+    "systemCredentialCommandsAfterSDKNoSecure": 0,
+    "liveNormalAARsha256": "7af225529d2d5cea6c435e28f568e7d3a3cd523688ed8a966be16dd1dfed1e08",
+    "liveNormalAAR7afPreserved": true,
+    "ownCLIProtectedDirectoryCleanupConfirmed": true,
+    "status": "PASS",
+    "sameIsolatedAVDPreserved": true,
+    "fixtures": [
+      {
+        "port": 4443,
+        "exactSIGTERMExited": true,
+        "portClosed": true
+      },
+      {
+        "port": 4445,
+        "exactSIGTERMExited": true,
+        "portClosed": true
+      },
+      {
+        "port": 4447,
+        "exactSIGTERMExited": true,
+        "portClosed": true
+      },
+      {
+        "port": 4449,
+        "exactSIGTERMExited": true,
+        "portClosed": true
+      },
+      {
+        "port": 4451,
+        "exactSIGTERMExited": true,
+        "portClosed": true
+      },
+      {
+        "port": 4455,
+        "exactSIGTERMExited": true,
+        "portClosed": true
+      },
+      {
+        "port": 4457,
+        "exactSIGTERMExited": true,
+        "portClosed": true
+      },
+      {
+        "port": 4459,
+        "exactSIGTERMExited": true,
+        "portClosed": true
+      },
+      {
+        "port": 4461,
+        "exactSIGTERMExited": true,
+        "portClosed": true
+      }
+    ]
+  },
+  "historicalFailuresPreserved": [
+    {
+      "resultSHA256": "adea15c39db58c5e0b0e48bf51abdd1caf6ada16e03d14060e08c3ed7647bb66",
+      "status": "FAIL",
+      "stage": "editProductVariable",
+      "error": "SELECTOR_AMBIGUOUS",
+      "authenticationInputs": 18,
+      "seconds": 93.089,
+      "caseLabel": "form-privacy-lifetime-fix"
+    },
+    {
+      "resultSHA256": "45e75d8eafc9f9df07c1d09442637d30ec1e66922acd70973ff2e58633b07004",
+      "status": "FAIL",
+      "stage": "prepareActualCLIApprovalForm",
+      "error": "SELECTOR_UNAVAILABLE",
+      "authenticationInputs": 28,
+      "seconds": 126.749,
+      "caseLabel": "strict-readonly-4455"
+    },
+    {
+      "resultSHA256": "6619ed9a8cc37eaddf8f4b820785fdb00bcbce3d3e3de7e043d001f6352cecd6",
+      "status": "FAIL",
+      "stage": "prepareActualCLIApprovalForm",
+      "error": "SCROLL_TARGET_UNAVAILABLE",
+      "authenticationInputs": 28,
+      "seconds": 114.978,
+      "caseLabel": "approval-scroll-4457"
+    },
+    {
+      "resultSHA256": "cb2226b2fb1d00b74088fbf1bb673b92978c37d87bcd67c6c41833dfb062c363",
+      "status": "FAIL",
+      "stage": "prepareActualCLIApprovalForm",
+      "error": "CONTROL_DISABLED",
+      "authenticationInputs": 28,
+      "seconds": 123.196,
+      "caseLabel": "navigation-stable-4459"
+    }
+  ]
+}
