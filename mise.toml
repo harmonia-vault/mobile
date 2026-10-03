@@ -51,3 +51,15 @@ run = 'python3 tool/native-recovery-test.py --serial "${HARMONIA_TEST_SERIAL:?�
 [tasks.test-native-account]
 description = "隔离AVD账号/可信投影/原ID续办三进程（先按ACCOUNT_NATIVE准备固定快照、合成PIN与HTTPS）"
 run = 'python3 tool/native-account-test.py --serial "${HARMONIA_TEST_SERIAL:?须显式选择隔离AVD}"'
+
+[tasks.go-native-build-ios]
+description = "固定 Go/BoringSSL 的 iOS 真机与 Simulator arm64 XCFramework，不签名或发布"
+run = 'bash tool/native-ios-build.sh ../core-go "${HARMONIA_BORINGSSL_SOURCE:?须显式指定固定fab96源码}" "${HARMONIA_GOMOBILE_TOOLS:?须显式指定固定gomobile工具目录}"'
+
+[tasks.ios-security-build]
+description = "构建独立 Simulator 合成安全测试应用，不编入产品"
+run = 'bash tool/ios-security-harness-build.sh "$(mise where flutter@3.47.6)"'
+
+[tasks.test-native-ios]
+description = "仅显式 Harmonia 独立 Simulator：执行原生加密、Keychain、PIN资格与持久化测试"
+run = 'python3 tool/ios-security-test.py --device "${HARMONIA_IOS_TEST_DEVICE:?须显式选择自己的合成Simulator UUID}"'
