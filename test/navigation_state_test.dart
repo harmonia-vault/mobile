@@ -41,7 +41,14 @@ class FixtureGateway implements SessionVaultGateway, InstanceConnectionGateway {
     String password,
   ) async => authentication;
   @override
-  Future<void> registerAccount(String email, String password) async {}
+  Future<AccountRegistration> registerAccount(
+    String email,
+    String password,
+  ) async => const AccountRegistration(
+    accountId: 'account-fixture',
+    accountGeneration: '1',
+    verificationRequired: false,
+  );
   @override
   Future<VaultSession> restoreSession() async => result;
   @override

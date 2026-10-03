@@ -13,10 +13,17 @@ void main() {
     'HARMONIA_NATIVE_EXPERIMENTAL',
     defaultValue: false,
   );
+  const productFixture = bool.fromEnvironment(
+    'HARMONIA_PRODUCT_FIXTURE',
+    defaultValue: false,
+  );
   final VaultGateway gateway = preview
       ? SyntheticPreviewGateway()
       : experimental
-      ? NativeVaultGateway(experimentalOptIn: true)
+      ? NativeVaultGateway(
+          experimentalOptIn: true,
+          productFixture: productFixture,
+        )
       : PublicConnectionGateway();
   final controller = VaultController(gateway: gateway, allowPreview: preview);
   runApp(HarmoniaApp(controller: controller));

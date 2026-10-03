@@ -5,31 +5,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import '../vault_controller.dart';
-
-const _seed = Color(0xFF00695C);
-
-ThemeData _theme(Brightness brightness) {
-  final scheme = ColorScheme.fromSeed(seedColor: _seed, brightness: brightness);
-  const target = Size(64, 48);
-  return ThemeData(
-    useMaterial3: true,
-    colorScheme: scheme,
-    materialTapTargetSize: MaterialTapTargetSize.padded,
-    visualDensity: VisualDensity.standard,
-    filledButtonTheme: FilledButtonThemeData(
-      style: FilledButton.styleFrom(minimumSize: target),
-    ),
-    outlinedButtonTheme: OutlinedButtonThemeData(
-      style: OutlinedButton.styleFrom(minimumSize: target),
-    ),
-    textButtonTheme: TextButtonThemeData(
-      style: TextButton.styleFrom(minimumSize: target),
-    ),
-    inputDecorationTheme: const InputDecorationTheme(
-      border: OutlineInputBorder(),
-    ),
-  );
-}
+import '../security/sensitive_input_guard.dart';
+import 'design_system.dart';
 
 class HarmoniaApp extends StatefulWidget {
   const HarmoniaApp({super.key, required this.controller});
@@ -60,8 +37,8 @@ class _HarmoniaAppState extends State<HarmoniaApp> {
       GlobalWidgetsLocalizations.delegate,
       GlobalCupertinoLocalizations.delegate,
     ],
-    theme: _theme(Brightness.light),
-    darkTheme: _theme(Brightness.dark),
+    theme: harmoniaTheme(Brightness.light),
+    darkTheme: harmoniaTheme(Brightness.dark),
     routerDelegate: _delegate,
     routeInformationParser: const _Parser(),
   );
@@ -102,9 +79,9 @@ class _Delegate extends RouterDelegate<Uri> with ChangeNotifier {
 
 String? _blocked(VaultController c, String op) {
   if (c.busy) return '正在处理上一项操作…';
-  if (!c.supports(op)) return '此操作尚未接通，当前不可用。';
+  if (!c.supports(op)) return '此版本暂不支持该操作。';
   if (!c.previewMode && c.phase != ConnectionPhase.online) {
-    return '需要在线连接才能修改。';
+    return '需要联网才能修改。';
   }
   return null;
 }
@@ -138,22 +115,29 @@ String _locKey(VaultLocation l) =>
 
 IconData _platformIcon(String p) =>
     RegExp('android|ios', caseSensitive: false).hasMatch(p)
-    ? Icons.smartphone
-    : Icons.laptop;
+    ? Icons.smartphone_outlined
+    : Icons.laptop_outlined;
 
-Widget _kv(String k, String v) => ListTile(
-  contentPadding: EdgeInsets.zero,
-  dense: true,
-  title: Text(v),
-  subtitle: Text(k),
-);
+IconData _roleIcon(AccessRole r) => switch (r) {
+  AccessRole.readOnly => Icons.visibility_outlined,
+  AccessRole.readWrite => Icons.edit_outlined,
+  AccessRole.admin => Icons.admin_panel_settings_outlined,
+};
+
+String _phaseLabel(ConnectionPhase phase) => switch (phase) {
+  ConnectionPhase.preview => '演示模式',
+  ConnectionPhase.blocked => '暂不可用',
+  ConnectionPhase.syncing => '正在同步',
+  ConnectionPhase.online => '已连接',
+  ConnectionPhase.offline => '离线',
+};
 
 String _phaseHint(ConnectionPhase phase) => switch (phase) {
-  ConnectionPhase.preview => '合成演示：数据只在本机内存中，未连接任何账号。',
-  ConnectionPhase.blocked => '设备信任尚未确认，当前真实操作不可用。',
+  ConnectionPhase.preview => '示例数据仅保存在本机内存，未连接任何账号。',
+  ConnectionPhase.blocked => '本机的设备信任尚未确认，暂时无法修改数据。',
   ConnectionPhase.syncing => '正在同步，结果以服务器确认为准。',
-  ConnectionPhase.online => '已连接。修改需服务器确认后才会显示。',
-  ConnectionPhase.offline => '离线：修改已禁用，请检查网络后刷新。',
+  ConnectionPhase.online => '已连接。修改经服务器确认后才会显示。',
+  ConnectionPhase.offline => '当前离线，仅可查看。请检查网络后刷新。',
 };
 
 IconData _phaseIcon(ConnectionPhase phase) => switch (phase) {
@@ -164,16 +148,23 @@ IconData _phaseIcon(ConnectionPhase phase) => switch (phase) {
   ConnectionPhase.offline => Icons.cloud_off_outlined,
 };
 
+HTone _phaseTone(ConnectionPhase phase) => switch (phase) {
+  ConnectionPhase.blocked || ConnectionPhase.offline => HTone.warning,
+  ConnectionPhase.online => HTone.success,
+  _ => HTone.neutral,
+};
+
 const _titles = {
-  VaultPage.entry: '和弦 Harmonia',
-  VaultPage.login: '登录',
-  VaultPage.registration: '注册',
-  VaultPage.recovery: '恢复访问',
-  VaultPage.initialization: '初始化首台设备',
-  VaultPage.authorization: '等待设备授权',
+  VaultPage.entry: '',
+  VaultPage.login: '',
+  VaultPage.registration: '',
+  VaultPage.emailProof: '',
+  VaultPage.recovery: '',
+  VaultPage.initialization: '',
+  VaultPage.authorization: '',
   VaultPage.environments: '环境',
   VaultPage.environmentDetail: '环境详情',
-  VaultPage.variableEditor: '新增或编辑变量',
+  VaultPage.variableEditor: '编辑变量',
   VaultPage.devices: '设备',
   VaultPage.deviceDetail: '设备详情',
   VaultPage.approval: '批准设备',
@@ -201,6 +192,7 @@ VaultPage? _resolve(VaultController c) {
       const {
             VaultPage.login,
             VaultPage.registration,
+            VaultPage.emailProof,
             VaultPage.recovery,
           }.contains(p)
           ? p
@@ -222,6 +214,7 @@ Widget _body(VaultController c, VaultPage? p) {
     VaultPage.entry => _EntryPage(c: c),
     VaultPage.login => _AccountForm(c: c, register: false),
     VaultPage.registration => _AccountForm(c: c, register: true),
+    VaultPage.emailProof => _EmailProofPage(c: c),
     VaultPage.recovery => _RecoveryWizard(c: c),
     VaultPage.initialization => _InitPage(c: c),
     VaultPage.authorization => _AwaitPage(c: c),
@@ -342,7 +335,7 @@ class _RootState extends State<_Root> with WidgetsBindingObserver {
       MaterialBanner(
         leading: const Icon(Icons.devices_other_outlined),
         content: Text(
-          '“${r.deviceName}”（${r.platform}）请求访问，${_time(r.expiresAt)} 前有效。不会自动批准。',
+          '“${r.deviceName}”（${r.platform}）请求访问，${_time(r.expiresAt)} 前有效。需要你核对后手动批准。',
         ),
         actions: [
           TextButton(onPressed: _hideBanner, child: const Text('稍后')),
@@ -351,7 +344,7 @@ class _RootState extends State<_Root> with WidgetsBindingObserver {
               _hideBanner();
               c.navigate(VaultPage.deviceDetail, requestId: r.id);
             },
-            child: const Text('查看详情'),
+            child: const Text('查看'),
           ),
         ],
       ),
@@ -385,14 +378,12 @@ class _RootState extends State<_Root> with WidgetsBindingObserver {
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: c,
     builder: (context, _) {
+      final scheme = Theme.of(context).colorScheme;
       final page = c.privacyObscured ? null : _resolve(c);
       final tab = page == null ? null : _tabOf(page);
-      final wide = MediaQuery.sizeOf(context).width >= 700;
-      final title = page == null
-          ? '保险库不可用'
-          : c.sessionStage == SessionStage.restrictedRecovery
-          ? '受限恢复'
-          : _titles[page]!;
+      // Tab roots render their own large page title.
+      final root = tab != null && page == _tabs[tab].$4;
+      final wide = MediaQuery.sizeOf(context).width >= HSize.wide;
       final frame = _Frame(
         c: c,
         vault: tab != null,
@@ -410,7 +401,7 @@ class _RootState extends State<_Root> with WidgetsBindingObserver {
           appBar: AppBar(
             automaticallyImplyLeading: false,
             leading: c.canGoBack ? BackButton(onPressed: _back) : null,
-            title: Text(title),
+            title: tab != null && !root ? Text(_titles[page]!) : null,
             actions: [
               if (tab != null)
                 IconButton(
@@ -418,11 +409,14 @@ class _RootState extends State<_Root> with WidgetsBindingObserver {
                   onPressed: c.busy ? null : () => unawaited(c.reload()),
                   icon: const Icon(Icons.refresh),
                 ),
-              if (tab == null && c.sessionStage != SessionStage.signedOut)
+              if (tab == null &&
+                  c.sessionStage != SessionStage.signedOut &&
+                  !c.previewMode)
                 TextButton(
                   onPressed: () => unawaited(c.logout()),
-                  child: Text(c.previewMode ? '退出演示' : '退出登录'),
+                  child: const Text('退出登录'),
                 ),
+              const SizedBox(width: HSpace.xs),
             ],
           ),
           body: SafeArea(
@@ -444,7 +438,7 @@ class _RootState extends State<_Root> with WidgetsBindingObserver {
                             ),
                         ],
                       ),
-                      const VerticalDivider(width: 1),
+                      const VerticalDivider(width: HSize.hairline),
                       Expanded(child: frame),
                     ],
                   )
@@ -452,17 +446,27 @@ class _RootState extends State<_Root> with WidgetsBindingObserver {
           ),
           bottomNavigationBar: tab == null || wide
               ? null
-              : NavigationBar(
-                  selectedIndex: tab,
-                  onDestinationSelected: (i) => c.selectTab(_tabs[i].$4),
-                  destinations: [
-                    for (var i = 0; i < _tabs.length; i++)
-                      NavigationDestination(
-                        icon: _icon(i, false),
-                        selectedIcon: _icon(i, true),
-                        label: _tabs[i].$3,
+              : DecoratedBox(
+                  decoration: BoxDecoration(
+                    border: Border(
+                      top: BorderSide(
+                        color: scheme.hHairline,
+                        width: HSize.stroke,
                       ),
-                  ],
+                    ),
+                  ),
+                  child: HNavBar(
+                    selectedIndex: tab,
+                    onSelected: (i) => c.selectTab(_tabs[i].$4),
+                    items: [
+                      for (var i = 0; i < _tabs.length; i++)
+                        (
+                          icon: _icon(i, false),
+                          selectedIcon: _icon(i, true),
+                          label: _tabs[i].$3,
+                        ),
+                    ],
+                  ),
                 ),
         ),
       );
@@ -482,17 +486,19 @@ class _Frame extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     children: [
       if (c.busy)
-        const LinearProgressIndicator()
+        const LinearProgressIndicator(minHeight: HSpace.xxs)
       else
-        const SizedBox(height: 4),
+        const SizedBox(height: HSpace.xxs),
       if (c.previewMode) _PreviewStrip(c: c),
-      if (vault) _StatusStrip(c: c),
+      if (vault && !c.previewMode && c.phase != ConnectionPhase.online)
+        _StatusStrip(c: c),
       if (c.error != null) _ErrorBanner(c: c),
       Expanded(child: child),
     ],
   );
 }
 
+/// 统一演示模式水印：只在 previewMode 下出现在每个页面顶部。
 class _PreviewStrip extends StatelessWidget {
   const _PreviewStrip({required this.c});
 
@@ -500,26 +506,57 @@ class _PreviewStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final s = Theme.of(context).colorScheme;
-    return Material(
-      color: s.tertiaryContainer,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
-        child: Row(
-          children: [
-            Icon(Icons.visibility_outlined, color: s.onTertiaryContainer),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                '合成演示，未连接账号。数据仅在本机内存中，不会上传。',
-                style: TextStyle(color: s.onTertiaryContainer),
+    final theme = Theme.of(context);
+    final s = theme.colorScheme;
+    return Semantics(
+      container: true,
+      label: '演示模式',
+      child: Material(
+        color: s.tertiaryContainer,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            HSpace.lg,
+            HSpace.xxs,
+            HSpace.sm,
+            HSpace.xxs,
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.visibility_outlined,
+                size: HSize.iconSmall,
+                color: s.onTertiaryContainer,
               ),
-            ),
-            TextButton(
-              onPressed: () => unawaited(c.logout()),
-              child: const Text('退出演示'),
-            ),
-          ],
+              const SizedBox(width: HSpace.sm),
+              Expanded(
+                child: Text.rich(
+                  TextSpan(
+                    children: [
+                      TextSpan(
+                        text: '演示模式',
+                        style: theme.textTheme.labelLarge?.copyWith(
+                          color: s.onTertiaryContainer,
+                        ),
+                      ),
+                      TextSpan(
+                        text: '  示例数据，不会上传',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: s.onTertiaryContainer,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              TextButton(
+                style: TextButton.styleFrom(
+                  foregroundColor: s.onTertiaryContainer,
+                ),
+                onPressed: () => unawaited(c.logout()),
+                child: const Text('退出演示'),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -532,43 +569,14 @@ class _StatusStrip extends StatelessWidget {
   final VaultController c;
 
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Material(
-      color: theme.colorScheme.surfaceContainerHigh,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Wrap(
-              spacing: 8,
-              runSpacing: 4,
-              children: [
-                const _Tag(Icons.science_outlined, '实验性 · 非生产可用'),
-                _Tag(_phaseIcon(c.phase), '状态：${c.phase.label}'),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(_phaseHint(c.phase), style: theme.textTheme.bodySmall),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _Tag extends StatelessWidget {
-  const _Tag(this.icon, this.text);
-
-  final IconData icon;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) => Chip(
-    avatar: Icon(icon, size: 18),
-    label: Text(text),
-    visualDensity: VisualDensity.compact,
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(HSpace.lg, HSpace.sm, HSpace.lg, 0),
+    child: HNotice(
+      _phaseHint(c.phase),
+      title: _phaseLabel(c.phase),
+      icon: _phaseIcon(c.phase),
+      tone: _phaseTone(c.phase),
+    ),
   );
 }
 
@@ -583,14 +591,31 @@ class _ErrorBanner extends StatelessWidget {
     final text = Theme.of(context).textTheme;
     return Semantics(
       liveRegion: true,
-      child: Material(
-        color: s.errorContainer,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 4, 8),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(HSpace.lg, HSpace.sm, HSpace.lg, 0),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(
+            HSpace.md,
+            HSpace.md,
+            HSpace.xs,
+            HSpace.xs,
+          ),
+          decoration: BoxDecoration(
+            color: s.errorContainer,
+            borderRadius: BorderRadius.circular(HRadius.md),
+          ),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.error_outline, color: s.onErrorContainer),
-              const SizedBox(width: 12),
+              Padding(
+                padding: const EdgeInsets.only(top: HSpace.xxs),
+                child: Icon(
+                  Icons.error_outline,
+                  size: HSize.icon,
+                  color: s.onErrorContainer,
+                ),
+              ),
+              const SizedBox(width: HSpace.md),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -601,22 +626,30 @@ class _ErrorBanner extends StatelessWidget {
                         color: s.onErrorContainer,
                       ),
                     ),
+                    const SizedBox(height: HSpace.xxs),
                     Text(
-                      '操作未生效或结果未确认。请勿重复提交新内容；刷新查询后再决定。',
+                      '操作未生效或结果未确认。请勿重复提交新内容，先刷新再决定。',
                       style: text.bodySmall?.copyWith(
                         color: s.onErrorContainer,
                       ),
                     ),
+                    if (c.canEnterVault)
+                      TextButton(
+                        style: TextButton.styleFrom(
+                          foregroundColor: s.onErrorContainer,
+                          padding: EdgeInsets.zero,
+                        ),
+                        onPressed: c.busy ? null : () => unawaited(c.reload()),
+                        child: const Text('刷新'),
+                      )
+                    else
+                      const SizedBox(height: HSpace.sm),
                   ],
                 ),
               ),
-              if (c.canEnterVault)
-                TextButton(
-                  onPressed: c.busy ? null : () => unawaited(c.reload()),
-                  child: const Text('刷新'),
-                ),
               IconButton(
                 tooltip: '关闭错误提示',
+                color: s.onErrorContainer,
                 onPressed: c.clearError,
                 icon: const Icon(Icons.close),
               ),
@@ -628,157 +661,25 @@ class _ErrorBanner extends StatelessWidget {
   }
 }
 
-class _Page extends StatelessWidget {
-  const _Page({required this.children});
+/// 一组竖排脚注。
+Widget _hints(List<Widget> children) => Column(
+  crossAxisAlignment: CrossAxisAlignment.stretch,
+  spacing: HSpace.sm,
+  children: children,
+);
 
-  final List<Widget> children;
+/// 竖排按钮组：主按钮在上，次要按钮在下。
+Widget _actions(List<Widget> children) => Column(
+  crossAxisAlignment: CrossAxisAlignment.stretch,
+  spacing: HSpace.sm,
+  children: children,
+);
 
-  @override
-  Widget build(BuildContext context) => Align(
-    alignment: Alignment.topCenter,
-    child: ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 760),
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-        children: children,
-      ),
-    ),
-  );
-}
-
-class _Section extends StatelessWidget {
-  const _Section({required this.title, required this.children});
-
-  final String title;
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) => Card(
-    margin: const EdgeInsets.only(bottom: 12),
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(title, style: Theme.of(context).textTheme.titleMedium),
-          for (final w in children)
-            Padding(padding: const EdgeInsets.only(top: 8), child: w),
-        ],
-      ),
-    ),
-  );
-}
-
-class _Note extends StatelessWidget {
-  const _Note(this.text, {this.icon = Icons.info_outline});
-
-  final String text;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 4),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(text, style: Theme.of(context).textTheme.bodyMedium),
-        ),
-      ],
-    ),
-  );
-}
-
-class _Step extends StatelessWidget {
-  const _Step(this.n, this.title, this.body, {this.done = false});
-
-  final int n;
-  final String title;
-  final String body;
-  final bool done;
-
-  @override
-  Widget build(BuildContext context) => ListTile(
-    contentPadding: EdgeInsets.zero,
-    leading: CircleAvatar(
-      radius: 14,
-      child: done ? const Icon(Icons.check, size: 16) : Text('$n'),
-    ),
-    title: Text(title),
-    subtitle: Text(body),
-  );
-}
-
-/// Inline two-step confirmation; no dialog lingers in the overlay.
-class _Danger extends StatefulWidget {
-  const _Danger({
-    required this.label,
-    required this.warning,
-    required this.onConfirm,
-  });
-
-  final String label;
-  final String warning;
-  final Future<void> Function()? onConfirm;
-
-  @override
-  State<_Danger> createState() => _DangerState();
-}
-
-class _DangerState extends State<_Danger> {
-  bool _armed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final s = Theme.of(context).colorScheme;
-    final run = widget.onConfirm;
-    if (!_armed) {
-      return OutlinedButton.icon(
-        style: OutlinedButton.styleFrom(foregroundColor: s.error),
-        onPressed: run == null ? null : () => setState(() => _armed = true),
-        icon: const Icon(Icons.delete_outline),
-        label: Text(widget.label),
-      );
-    }
-    return Card(
-      color: s.errorContainer,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(widget.warning, style: TextStyle(color: s.onErrorContainer)),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  onPressed: () => setState(() => _armed = false),
-                  child: const Text('取消'),
-                ),
-                FilledButton(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: s.error,
-                    foregroundColor: s.onError,
-                  ),
-                  onPressed: run == null
-                      ? null
-                      : () {
-                          setState(() => _armed = false);
-                          unawaited(run());
-                        },
-                  child: Text('确认${widget.label}'),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
+Text _muted(BuildContext context, String text) => Text(
+  text,
+  style: Theme.of(context).textTheme.bodyMedium
+      ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+);
 
 class _EntryPage extends StatefulWidget {
   const _EntryPage({required this.c});
@@ -802,21 +703,27 @@ class _EntryPageState extends State<_EntryPage> {
     final parsed = Uri.tryParse(url);
     final valid =
         parsed != null && parsed.scheme == 'https' && parsed.host.isNotEmpty;
-    return _Page(
+    return HPage(
+      narrow: true,
       children: [
-        _Section(
-          title: '连接你的 Harmonia',
+        const HBrandHero(
+          caption: '连接到 Harmonia',
+          body: '输入你自托管的服务地址。连接后再登录或创建账号。',
+        ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          spacing: HSpace.md,
           children: [
-            const Text('请输入自托管 HTTPS 服务地址。下一步会验证产品身份、协议兼容及公开注册能力。'),
             TextField(
               controller: _endpoint,
               keyboardType: TextInputType.url,
               autocorrect: false,
               enableSuggestions: false,
               decoration: InputDecoration(
-                labelText: 'HTTPS 服务地址',
+                labelText: '服务地址',
                 hintText: 'https://',
-                errorText: url.isEmpty || valid ? null : '需要完整 HTTPS 地址',
+                prefixIcon: const Icon(Icons.dns_outlined),
+                errorText: url.isEmpty || valid ? null : '请输入完整的 HTTPS 地址',
               ),
               onChanged: (_) => setState(() {}),
             ),
@@ -826,16 +733,18 @@ class _EntryPageState extends State<_EntryPage> {
                   : () => unawaited(c.connectServer(url)),
               child: Text(c.busy ? '正在验证…' : '下一步'),
             ),
-            const Text('连接失败、离线或协议不兼容时，会保留此页。连接验证不代表账号登录或设备可信。'),
           ],
         ),
+        const HHint(
+          '仅支持 HTTPS。连接成功不等于已登录，也不会让本机成为可信设备。',
+          icon: Icons.lock_outline,
+        ),
         if (c.previewAvailable)
-          Align(
-            alignment: Alignment.centerRight,
+          Center(
             child: TextButton.icon(
               onPressed: c.busy ? null : () => unawaited(c.enterPreview()),
-              icon: const Icon(Icons.developer_mode_outlined, size: 18),
-              label: const Text('开发者：打开合成演示'),
+              icon: const Icon(Icons.visibility_outlined, size: HSize.icon),
+              label: const Text('打开演示模式'),
             ),
           ),
       ],
@@ -859,8 +768,25 @@ class _AccountFormState extends State<_AccountForm> {
   final _confirm = TextEditingController();
   bool _show = false;
 
+  late final SensitiveInputGuard _sensitiveInputs;
+  @override
+  void initState() {
+    super.initState();
+    _sensitiveInputs = SensitiveInputGuard(
+      [_password, _confirm],
+      onCleared: () {
+        if (mounted) {
+          setState(() {
+            _show = false;
+          });
+        }
+      },
+    );
+  }
+
   @override
   void dispose() {
+    _sensitiveInputs.dispose();
     _password.clear();
     _confirm.clear();
     _email.dispose();
@@ -892,7 +818,9 @@ class _AccountFormState extends State<_AccountForm> {
       suffixIcon: IconButton(
         tooltip: _show ? '隐藏密码' : '显示密码',
         onPressed: () => setState(() => _show = !_show),
-        icon: Icon(_show ? Icons.visibility_off : Icons.visibility),
+        icon: Icon(
+          _show ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+        ),
       ),
     ),
     onChanged: (_) => setState(() {}),
@@ -909,66 +837,191 @@ class _AccountFormState extends State<_AccountForm> {
         _email.text.contains('@') &&
         _password.text.isNotEmpty &&
         (!reg || _password.text == _confirm.text);
-    return _Page(
+    final rows = <Widget>[
+      if (c.supports('restoreSession'))
+        HRow(
+          icon: Icons.phonelink_lock_outlined,
+          title: '打开本机已授权的保险库',
+          subtitle: '需要系统验证',
+          enabled: !c.busy,
+          onTap: () => unawaited(c.unlockSavedDevice()),
+        ),
+      if (c.supports('queryInitialization'))
+        HRow(
+          icon: Icons.restart_alt,
+          title: '继续本机的首台设备初始化',
+          enabled: !c.busy,
+          onTap: () => unawaited(c.resumeInitialization()),
+        ),
+      if (!reg)
+        HRow(
+          icon: Icons.health_and_safety_outlined,
+          title: '使用恢复码恢复访问',
+          onTap: () => c.navigate(VaultPage.recovery),
+        ),
+    ];
+    return HPage(
+      narrow: true,
       children: [
-        _Section(
-          title: reg ? '注册账号' : '登录账号',
-          children: [
-            if (!cap)
-              _Note(
-                '账号${reg ? '注册' : '登录'}尚未接通（未验收），目前无法提交。',
-                icon: Icons.construction_outlined,
-              ),
-            Text('服务地址：${c.endpoint.isEmpty ? '未设置' : c.endpoint}'),
-            TextButton(
-              onPressed: c.busy ? null : c.switchServer,
-              child: const Text('切换服务地址'),
+        HBrandHero(
+          caption: reg ? '创建账号' : '登录',
+          body: reg ? '在此服务上创建新账号。' : '环境变量，多端同步。使用你在此服务上的账号登录。',
+        ),
+        if (!cap)
+          HNotice(
+            '此版本暂不支持在 App 内${reg ? '注册' : '登录'}。',
+            tone: HTone.warning,
+            icon: Icons.construction_outlined,
+          ),
+        TextField(
+          controller: _email,
+          keyboardType: TextInputType.emailAddress,
+          autocorrect: false,
+          enableSuggestions: false,
+          decoration: const InputDecoration(labelText: '邮箱'),
+          onChanged: (_) => setState(() {}),
+        ),
+        _secret(_password, '密码'),
+        if (reg) _secret(_confirm, '再次输入密码'),
+        if (reg && c.emailVerificationRequired)
+          const HHint('注册后需要验证邮箱。', icon: Icons.mark_email_read_outlined),
+        _actions([
+          FilledButton(
+            onPressed: ok ? _submit : null,
+            child: Text(reg ? '注册' : '登录'),
+          ),
+          if (!reg && c.registrationAvailable)
+            OutlinedButton(
+              onPressed: () => c.navigate(VaultPage.registration),
+              child: const Text('注册新账号'),
             ),
-            if (!reg && c.registrationAvailable)
-              TextButton(
-                onPressed: () => c.navigate(VaultPage.registration),
-                child: const Text('注册新账号'),
-              ),
-            if (!reg)
-              TextButton(
-                onPressed: () => c.navigate(VaultPage.recovery),
-                child: const Text('用恢复码恢复访问'),
-              ),
-            if (reg)
-              Text('邮箱验证：${c.emailVerificationRequired ? '需要' : '不要求'}'),
-            if (reg)
-              TextButton(
-                onPressed: () => c.navigate(VaultPage.login),
-                child: const Text('已有账号，登录'),
-              ),
+          if (reg)
+            OutlinedButton(
+              onPressed: () => c.navigate(VaultPage.login),
+              child: const Text('已有账号？登录'),
+            ),
+        ]),
+        HNotice(
+          reg
+              ? '注册只创建账号。本机随后作为首台设备初始化，需要完整重新输入新生成的恢复码。'
+              : '登录只确认账号身份。新设备需要在已授权的设备上批准后，才能查看保险库。',
+          icon: Icons.verified_user_outlined,
+        ),
+        if (rows.isNotEmpty) HSection(children: rows),
+        const HHint('密码不会被保存，提交后输入框立即清空。', icon: Icons.lock_outline),
+        HSurface(
+          child: HRow(
+            icon: Icons.dns_outlined,
+            label: '服务地址',
+            title: c.endpoint.isEmpty ? '未设置' : c.endpoint,
+            trailing: TextButton(
+              style: hChipButton(Theme.of(context).colorScheme),
+              onPressed: c.busy ? null : c.switchServer,
+              child: const Text('更换'),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
 
+class _EmailProofPage extends StatefulWidget {
+  const _EmailProofPage({required this.c});
+  final VaultController c;
+  @override
+  State<_EmailProofPage> createState() => _EmailProofPageState();
+}
+
+class _EmailProofPageState extends State<_EmailProofPage> {
+  final _challenge = TextEditingController();
+  final _token = TextEditingController();
+  late final SensitiveInputGuard _sensitiveInputs;
+  @override
+  void initState() {
+    super.initState();
+    _sensitiveInputs = SensitiveInputGuard(
+      [_token, _challenge],
+      onCleared: () {
+        if (mounted) setState(() {});
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _sensitiveInputs.dispose();
+    _token.clear();
+    _challenge.clear();
+    _token.dispose();
+    _challenge.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final token = _token.text.trim();
+    final challenge = _challenge.text.trim();
+    _token.clear();
+    _challenge.clear();
+    await widget.c.verifyRegistrationEmail(challenge, token);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = widget.c;
+    return HPage(
+      narrow: true,
+      children: [
+        const HHeader(
+          icon: Icons.mark_email_unread_outlined,
+          title: '验证邮箱',
+          body: '账号已创建。请输入验证邮件中的验证 ID 和验证码。',
+        ),
+        if (!c.supports('verifyEmail'))
+          const HNotice(
+            '此版本暂不支持在 App 内验证邮箱。',
+            tone: HTone.warning,
+            icon: Icons.construction_outlined,
+          ),
+        HSection(
+          form: true,
+          children: [
             TextField(
-              controller: _email,
-              keyboardType: TextInputType.emailAddress,
+              controller: _challenge,
               autocorrect: false,
               enableSuggestions: false,
-              decoration: const InputDecoration(labelText: '邮箱'),
+              decoration: const InputDecoration(labelText: '验证 ID'),
               onChanged: (_) => setState(() {}),
             ),
-            _secret(_password, '密码'),
-            if (reg) _secret(_confirm, '再次输入密码'),
+            TextField(
+              controller: _token,
+              obscureText: true,
+              autocorrect: false,
+              enableSuggestions: false,
+              enableIMEPersonalizedLearning: false,
+              decoration: const InputDecoration(labelText: '验证码'),
+              onChanged: (_) => setState(() {}),
+            ),
             FilledButton(
-              onPressed: ok ? _submit : null,
-              child: Text(reg ? '注册' : '登录'),
+              onPressed:
+                  !c.busy &&
+                      c.supports('verifyEmail') &&
+                      _challenge.text.trim().isNotEmpty &&
+                      _token.text.trim().isNotEmpty
+                  ? _submit
+                  : null,
+              child: const Text('系统验证并提交'),
             ),
           ],
         ),
-        _Section(
-          title: '之后会发生什么',
-          children: [
-            const _Note('登录只证明账号身份，不会让本机成为可信设备。', icon: Icons.person_outline),
-            _Note(
-              reg
-                  ? '注册后本机作为首台设备初始化：需完整重新输入安全适配器生成的新恢复码。'
-                  : '非首台设备需在已授权设备上核对并批准后，才能进入保险库。',
-            ),
-            const _Note('密码不会被本界面保存或记录；提交后输入框立即清空。', icon: Icons.lock_outline),
-          ],
+        _hints(const [
+          HHint('验证邮箱不会让本机成为可信设备。', icon: Icons.lock_outline),
+          HHint('暂不支持在 App 内重新发送验证邮件。'),
+          HHint('结果不明确或验证码已使用过时，请先用原账号重新登录确认状态，不要重新注册。'),
+        ]),
+        OutlinedButton(
+          onPressed: c.busy ? null : () => c.navigate(VaultPage.login),
+          child: const Text('重新登录确认状态'),
         ),
       ],
     );
@@ -983,74 +1036,232 @@ class _RecoveryWizard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final restricted = c.sessionStage == SessionStage.restrictedRecovery;
-    return _Page(
+    return HPage(
+      narrow: true,
       children: [
+        HHeader(
+          icon: Icons.health_and_safety_outlined,
+          title: restricted ? '受限恢复' : '恢复访问',
+          body: '使用恢复码重新获得保险库访问。',
+        ),
         if (restricted)
-          Card(
-            color: Theme.of(context).colorScheme.tertiaryContainer,
-            margin: const EdgeInsets.only(bottom: 12),
-            child: ListTile(
-              leading: const Icon(Icons.gpp_maybe_outlined),
-              title: const Text('受限恢复会话：不能访问环境与设备'),
-              subtitle: Text(c.recoveryStatus),
-            ),
+          HNotice(
+            c.recoveryStatus,
+            title: '受限恢复中，暂不能访问环境与设备',
+            tone: HTone.warning,
+            icon: Icons.gpp_maybe_outlined,
           ),
-        const _Note('恢复码不是备份，它不保存变量内容。同时丢失所有可信设备和恢复码时，旧保险库无法恢复。'),
-        _Section(
+        HSection(
           title: '恢复步骤',
+          form: true,
           children: [
-            _Step(1, '输入旧的完整恢复码', '验证后进入受限恢复会话。', done: restricted),
-            const _Step(2, '完整重新输入新恢复码', '新恢复码由安全适配器生成并单独显示；重新输入只校验抄写一致。'),
-            const _Step(3, '显式登记本机', '逐项选择环境、角色与有效期后登记，完成后本机才成为可信设备。'),
+            HStep(1, '输入旧的完整恢复码', '验证后进入受限恢复。', done: restricted),
+            const HStep(2, '完整重新输入新恢复码', '新恢复码会单独显示；重新输入用于确认抄写无误。'),
+            const HStep(3, '登记本机', '逐项选择环境、角色与有效期。完成后本机才成为可信设备。'),
           ],
         ),
-        _Section(
-          title: '当前不可用',
-          children: [
-            const _Note(
-              '原生恢复切片已有验证，但 Flutter 完整恢复流程尚未接通。界面不会生成或显示新恢复码，也不会显示成功。',
-              icon: Icons.construction_outlined,
-            ),
-            FilledButton(
-              onPressed: null,
-              child: Text(restricted ? '继续：输入新恢复码' : '开始恢复'),
-            ),
-            if (restricted)
-              OutlinedButton(
-                onPressed: c.busy
-                    ? null
-                    : () => unawaited(c.queryRecoveryStatus()),
-                child: const Text('查询恢复状态'),
-              ),
-          ],
+        const HNotice(
+          '此版本暂不支持在 App 内完成恢复，不会生成或显示新的恢复码。',
+          icon: Icons.construction_outlined,
         ),
+        _actions([
+          FilledButton(
+            onPressed: null,
+            child: Text(restricted ? '继续：输入新恢复码' : '开始恢复'),
+          ),
+          if (restricted)
+            OutlinedButton(
+              onPressed: c.busy
+                  ? null
+                  : () => unawaited(c.queryRecoveryStatus()),
+              child: const Text('查询恢复状态'),
+            ),
+        ]),
+        const HHint('恢复码不是备份，不保存变量内容。如果同时丢失所有可信设备和恢复码，旧保险库将无法恢复。'),
       ],
     );
   }
 }
 
-class _InitPage extends StatelessWidget {
+class _InitPage extends StatefulWidget {
   const _InitPage({required this.c});
-
   final VaultController c;
+  @override
+  State<_InitPage> createState() => _InitPageState();
+}
+
+class _InitPageState extends State<_InitPage> {
+  final _email = TextEditingController();
+  final _password = TextEditingController();
+  final _name = TextEditingController(text: '初始环境');
+  final _fullCode = TextEditingController();
+  bool _showCode = false;
+  late final SensitiveInputGuard _sensitiveInputs;
+  @override
+  void initState() {
+    super.initState();
+    _sensitiveInputs = SensitiveInputGuard(
+      [_password, _fullCode],
+      onCleared: () {
+        if (mounted) {
+          setState(() {
+            _showCode = false;
+          });
+        }
+      },
+    );
+  }
 
   @override
-  Widget build(BuildContext context) => const _Page(
-    children: [
-      _Section(
-        title: '首台设备向导',
-        children: [
-          _Step(1, '账号已登录', '登录只证明身份，本机尚未可信。', done: true),
-          _Step(2, '保存并完整重新输入新恢复码', '新恢复码由安全适配器生成并单独显示，请离线抄写保存。'),
-          _Step(3, '初始化保险库', '完成后本机成为首台可信设备。'),
+  void dispose() {
+    _sensitiveInputs.dispose();
+    _password.clear();
+    _fullCode.clear();
+    _email.dispose();
+    _password.dispose();
+    _name.dispose();
+    _fullCode.dispose();
+    super.dispose();
+  }
+
+  Future<void> _begin() async {
+    final password = _password.text;
+    _password.clear();
+    await widget.c.beginInitialization(
+      _email.text.trim(),
+      password,
+      _name.text.trim(),
+    );
+  }
+
+  Future<void> _complete() async {
+    final reentry = _fullCode.text;
+    _fullCode.clear();
+    await widget.c.completeInitialization(reentry);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = widget.c;
+    final theme = Theme.of(context);
+    final begun = c.initializationState != 'none';
+    final canBegin =
+        c.supports('beginInitialization') &&
+        !c.busy &&
+        !begun &&
+        _email.text.contains('@') &&
+        _password.text.isNotEmpty &&
+        _name.text.trim().isNotEmpty &&
+        _envNameError(_name.text) == null;
+    return HPage(
+      narrow: true,
+      children: [
+        const HHeader(
+          icon: Icons.phonelink_setup_outlined,
+          title: '设置首台设备',
+          body: '本机还不是可信设备。初始化需要重新验证账号密码和系统身份，完成并通过验证后才能进入保险库。',
+        ),
+        if (!begun) ...[
+          if (!c.supports('beginInitialization'))
+            const HNotice(
+              '此版本暂不支持首台设备初始化。',
+              tone: HTone.warning,
+              icon: Icons.construction_outlined,
+            ),
+          HSection(
+            form: true,
+            children: [
+              TextField(
+                controller: _email,
+                keyboardType: TextInputType.emailAddress,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: const InputDecoration(labelText: '账号邮箱'),
+                onChanged: (_) => setState(() {}),
+              ),
+              TextField(
+                controller: _password,
+                obscureText: true,
+                autocorrect: false,
+                enableSuggestions: false,
+                enableIMEPersonalizedLearning: false,
+                decoration: const InputDecoration(labelText: '账号密码'),
+                onChanged: (_) => setState(() {}),
+              ),
+              TextField(
+                controller: _name,
+                decoration: InputDecoration(
+                  labelText: '首个环境名称',
+                  errorText: _envNameError(_name.text),
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+              FilledButton(
+                onPressed: canBegin ? _begin : null,
+                child: const Text('生成新恢复码'),
+              ),
+            ],
+          ),
         ],
-      ),
-      _Note(
-        '首台设备初始化尚未接通，当前无法继续；界面不会生成或显示恢复码。',
-        icon: Icons.construction_outlined,
-      ),
-    ],
-  );
+        if (begun)
+          HSection(
+            title: '保存恢复码',
+            form: true,
+            children: [
+              _muted(context, '请离线抄写并妥善保存本次恢复码。它不会以明文上传，也不会自动填入下方输入框。'),
+              if (c.initializationCode != null) ...[
+                Container(
+                  padding: const EdgeInsets.all(HSpace.lg),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surfaceContainerHigh,
+                    borderRadius: BorderRadius.circular(HRadius.md),
+                  ),
+                  child: SelectableText(
+                    _showCode ? c.initializationCode! : '••••••••',
+                    style: hMono(theme.textTheme.titleMedium),
+                  ),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => setState(() => _showCode = !_showCode),
+                  icon: Icon(
+                    _showCode
+                        ? Icons.visibility_off_outlined
+                        : Icons.visibility_outlined,
+                  ),
+                  label: Text(_showCode ? '隐藏恢复码' : '显示恢复码'),
+                ),
+              ] else
+                const HNotice('本次恢复码已不在内存中。请使用你已保存的完整恢复码，并查询原初始化状态，不要重新开始。'),
+              TextField(
+                controller: _fullCode,
+                obscureText: true,
+                autocorrect: false,
+                enableSuggestions: false,
+                enableIMEPersonalizedLearning: false,
+                decoration: const InputDecoration(labelText: '完整重新输入恢复码'),
+                onChanged: (_) => setState(() {}),
+              ),
+              FilledButton(
+                onPressed:
+                    !c.busy &&
+                        c.supports('completeInitialization') &&
+                        _fullCode.text.isNotEmpty
+                    ? _complete
+                    : null,
+                child: const Text('核验并完成初始化'),
+              ),
+              OutlinedButton(
+                onPressed: !c.busy && c.supports('queryInitialization')
+                    ? () => unawaited(c.queryInitialization())
+                    : null,
+                child: const Text('查询初始化状态'),
+              ),
+              HHint('当前状态：${c.initializationState}'),
+            ],
+          ),
+      ],
+    );
+  }
 }
 
 class _AwaitPage extends StatelessWidget {
@@ -1059,25 +1270,34 @@ class _AwaitPage extends StatelessWidget {
   final VaultController c;
 
   @override
-  Widget build(BuildContext context) => _Page(
+  Widget build(BuildContext context) => HPage(
+    narrow: true,
     children: [
-      const _Section(
-        title: '本机尚未成为可信设备',
+      const HHeader(
+        icon: Icons.hourglass_top_rounded,
+        title: '等待授权',
+        body: '本机还不是可信设备。请在已授权的设备上批准本机。',
+      ),
+      const HSection(
+        title: '如何批准',
+        form: true,
         children: [
-          _Step(1, '在已授权设备上打开“设备 → 批准新设备”', '需要该设备的管理权限。'),
-          _Step(2, '核对配对信息', '输入本机显示的 PairID 与 8 位短码，并核对环境、角色、期限。'),
-          _Step(3, '对方系统验证后批准', '服务器确认后，本机才可进入保险库。'),
-          _Note('不会自动批准；在批准完成前，本机无法查看任何环境或变量。', icon: Icons.lock_outline),
+          HStep(1, '在已授权设备上打开“设备 → 批准新设备”', '该设备需要管理权限。'),
+          HStep(2, '输入配对信息', '输入本机显示的配对 ID 与 8 位短码，并核对环境、角色和有效期。'),
+          HStep(3, '在对方设备上完成系统验证', '服务器确认后，本机才能进入保险库。'),
         ],
       ),
-      OutlinedButton(
-        onPressed: c.busy ? null : () => unawaited(c.reload()),
-        child: const Text('刷新状态'),
-      ),
-      TextButton(
-        onPressed: () => c.navigate(VaultPage.initialization),
-        child: const Text('这是账号的第一台设备？'),
-      ),
+      const HHint('不会自动批准。批准完成前，本机无法查看任何环境或变量。', icon: Icons.lock_outline),
+      _actions([
+        FilledButton(
+          onPressed: c.busy ? null : () => unawaited(c.reload()),
+          child: const Text('刷新状态'),
+        ),
+        TextButton(
+          onPressed: () => c.navigate(VaultPage.initialization),
+          child: const Text('这是账号的第一台设备？'),
+        ),
+      ]),
     ],
   );
 }
@@ -1088,16 +1308,126 @@ class _Locked extends StatelessWidget {
   final VaultController c;
 
   @override
-  Widget build(BuildContext context) => _Page(
-    children: [
-      _Note(_phaseHint(c.phase), icon: _phaseIcon(c.phase)),
-      const _Note('保险库当前不可进入。请刷新或退出后重试。', icon: Icons.lock_outline),
-      OutlinedButton(
-        onPressed: c.busy ? null : () => unawaited(c.reload()),
-        child: const Text('刷新'),
-      ),
-    ],
-  );
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final p = c.approvalProgress;
+    return HPage(
+      narrow: true,
+      children: [
+        const HHeader(
+          icon: Icons.lock_outline,
+          tone: HTone.neutral,
+          title: '保险库暂不可用',
+          body: '请刷新，或退出后重试。',
+        ),
+        HNotice(
+          _phaseHint(c.phase),
+          title: _phaseLabel(c.phase),
+          icon: _phaseIcon(c.phase),
+          tone: _phaseTone(c.phase),
+        ),
+        if (p.state != 'none')
+          HSection(
+            title: '设备审批进度',
+            children: [
+              HKeyValue('配对 ID', p.pairingId, mono: true, selectable: true),
+              HKeyValue(
+                '状态',
+                p.state == 'approved'
+                    ? '管理设备已批准，等待新设备完成'
+                    : p.state == 'complete'
+                    ? '双方均已完成'
+                    : '结果待确认，只能沿原配对 ID 继续',
+              ),
+              Padding(
+                padding: const EdgeInsets.all(HSpace.lg),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  spacing: HSpace.sm,
+                  children: [
+                    const HHint('只会沿用原配对 ID 继续，不会重新输入短码、修改环境范围或产生新签名。'),
+                    const HHint('“已批准”仅表示管理设备已批准，不代表新设备已完成登记。'),
+                    const SizedBox(height: HSpace.xs),
+                    FilledButton(
+                      onPressed:
+                          !c.busy && c.supports('retryApproval') && p.canRetry
+                          ? () => unawaited(c.retryApproval())
+                          : null,
+                      child: const Text('沿原配对 ID 查询并继续'),
+                    ),
+                    OutlinedButton(
+                      onPressed: !c.busy && c.supports('queryApproval')
+                          ? () => unawaited(c.queryApproval())
+                          : null,
+                      child: const Text('查询审批状态'),
+                    ),
+                    OutlinedButton(
+                      onPressed:
+                          !c.busy && c.supports('cancelApproval') && p.canCancel
+                          ? () => unawaited(c.cancelApproval())
+                          : null,
+                      child: const Text('取消未提交的审批'),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        if (c.supports('businessPendingInfo'))
+          HSection(
+            title: '本机未完成的操作',
+            children: [
+              for (final item in c.businessPending)
+                Padding(
+                  padding: const EdgeInsets.all(HSpace.lg),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    spacing: HSpace.xs,
+                    children: [
+                      Text(item.operation, style: theme.textTheme.titleSmall),
+                      Text(
+                        '状态 ${item.state} · 序号 ${item.sequence} · ${item.applied ? '已应用' : '未应用'}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      SelectableText(
+                        item.id,
+                        style: hMono(
+                          theme.textTheme.bodySmall,
+                        ).copyWith(color: theme.colorScheme.onSurfaceVariant),
+                      ),
+                      const SizedBox(height: HSpace.xs),
+                      FilledButton.tonal(
+                        onPressed:
+                            !c.busy &&
+                                item.canRetry &&
+                                c.supports('retryBusinessOperation')
+                            ? () => unawaited(c.retryBusinessPending(item.id))
+                            : null,
+                        child: const Text('沿原 ID 查询并继续'),
+                      ),
+                    ],
+                  ),
+                ),
+              Padding(
+                padding: const EdgeInsets.all(HSpace.sm),
+                child: TextButton(
+                  onPressed: c.busy
+                      ? null
+                      : () => unawaited(c.queryBusinessPending()),
+                  child: const Text('查询本机未完成的操作'),
+                ),
+              ),
+            ],
+          ),
+        OutlinedButton(
+          onPressed: c.busy ? null : () => unawaited(c.reload()),
+          child: const Text('刷新'),
+        ),
+      ],
+    );
+  }
 }
 
 String? _envNameError(String raw) {
@@ -1136,43 +1466,57 @@ class _EnvListState extends State<_EnvList> {
   @override
   Widget build(BuildContext context) {
     final c = widget.c;
-    final text = Theme.of(context).textTheme;
     final why = _blocked(c, 'createEnvironment');
     final err = _envNameError(_name.text);
-    return _Page(
+    return HPage(
       children: [
-        Text(
-          '检查点 #${c.checkpoint}',
-          style: text.bodyMedium?.copyWith(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
+        const HPageTitle('环境'),
+        IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            spacing: HSpace.md,
+            children: [
+              Expanded(
+                child: HStat(
+                  label: '全部环境',
+                  value: '${c.environments.length}',
+                ),
+              ),
+              Expanded(
+                child: HStat(
+                  label: '状态',
+                  value: _phaseLabel(c.phase),
+                  icon: _phaseIcon(c.phase),
+                  tone: _phaseTone(c.phase),
+                ),
+              ),
+            ],
           ),
         ),
-        const SizedBox(height: 8),
         if (c.environments.isEmpty)
-          const _Section(
-            title: '还没有环境',
-            children: [
-              Text('环境是一组变量（例如“开发”“生产”）。每台设备的角色决定只读、读写或管理。'),
-              Text('应用不会自动导入本机环境变量或 .env 文件。'),
-            ],
+          const HSurface(
+            child: HEmpty(
+              icon: Icons.layers_outlined,
+              title: '还没有环境',
+              body: '环境是一组变量，例如“开发”或“生产”。每台设备在各环境中的角色决定它能查看还是修改。不会自动导入本机环境变量或 .env 文件。',
+            ),
           )
         else
           for (final e in c.environments)
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.layers_outlined),
-                title: Text(e.name),
-                subtitle: Text('${e.role.label} · ${e.variables.length} 个变量'),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => c.navigate(
-                  VaultPage.environmentDetail,
-                  environmentId: e.id,
-                ),
+            HEnvCard(
+              name: e.name,
+              count: e.variables.length,
+              role: e.role.label,
+              roleIcon: _roleIcon(e.role),
+              readOnly: e.role == AccessRole.readOnly,
+              onTap: () => c.navigate(
+                VaultPage.environmentDetail,
+                environmentId: e.id,
               ),
             ),
-        const SizedBox(height: 12),
-        _Section(
+        HSection(
           title: '新建环境',
+          form: true,
           children: [
             TextField(
               controller: _name,
@@ -1183,7 +1527,7 @@ class _EnvListState extends State<_EnvList> {
               ),
               onChanged: (_) => setState(() {}),
             ),
-            FilledButton.tonalIcon(
+            FilledButton.icon(
               onPressed:
                   why == null && err == null && _name.text.trim().isNotEmpty
                   ? _create
@@ -1191,7 +1535,7 @@ class _EnvListState extends State<_EnvList> {
               icon: const Icon(Icons.add),
               label: const Text('新建环境'),
             ),
-            if (why != null) _Note(why, icon: Icons.lock_outline),
+            if (why != null) HHint(why, icon: Icons.lock_outline),
           ],
         ),
       ],
@@ -1199,9 +1543,12 @@ class _EnvListState extends State<_EnvList> {
   }
 }
 
-Widget _missing(VaultController c, String text) => _Page(
+Widget _missing(VaultController c, String text) => HPage(
+  narrow: true,
   children: [
-    _Note(text),
+    HSurface(
+      child: HEmpty(icon: Icons.search_off_outlined, title: text),
+    ),
     OutlinedButton(onPressed: c.goBack, child: const Text('返回')),
   ],
 );
@@ -1228,9 +1575,9 @@ class _EnvDetailState extends State<_EnvDetail> {
   }
 
   static String _roleNote(AccessRole role) => switch (role) {
-    AccessRole.readOnly => '只读权限：可查看（值默认隐藏），不能添加、编辑或删除。',
-    AccessRole.readWrite => '读写权限：可编辑变量；重命名和删除环境需要管理权限。',
-    AccessRole.admin => '管理权限：可编辑变量并管理此环境。',
+    AccessRole.readOnly => '只读：可以查看变量（值默认隐藏），不能新增、编辑或删除。',
+    AccessRole.readWrite => '读写：可以编辑变量；重命名或删除环境需要管理权限。',
+    AccessRole.admin => '管理：可以编辑变量并管理此环境。',
   };
 
   @override
@@ -1241,44 +1588,45 @@ class _EnvDetailState extends State<_EnvDetail> {
     final n = _name.text.trim();
     final err = _envNameError(n);
     final why = _blocked(c, 'renameEnvironment');
-    return _Page(
+    final readOnly = env.role == AccessRole.readOnly;
+    return HPage(
       children: [
-        Text(env.name, style: Theme.of(context).textTheme.headlineSmall),
-        _Note(
-          _roleNote(env.role),
-          icon: env.role == AccessRole.readOnly
-              ? Icons.lock_outline
-              : Icons.badge_outlined,
+        HEnvCard(
+          name: env.name,
+          count: env.variables.length,
+          role: env.role.label,
+          roleIcon: _roleIcon(env.role),
+          readOnly: readOnly,
         ),
-        Row(
+        HNotice(_roleNote(env.role), icon: _roleIcon(env.role)),
+        HSection(
+          title: '变量',
+          trailing: TextButton.icon(
+            onPressed: readOnly
+                ? null
+                : () => c.navigate(
+                    VaultPage.variableEditor,
+                    environmentId: env.id,
+                  ),
+            icon: const Icon(Icons.edit_outlined, size: HSize.icon),
+            label: const Text('新增或编辑'),
+          ),
           children: [
-            Expanded(
-              child: Text(
-                '变量（${env.variables.length}）',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-            ),
-            FilledButton.tonalIcon(
-              onPressed: env.role == AccessRole.readOnly
-                  ? null
-                  : () => c.navigate(
-                      VaultPage.variableEditor,
-                      environmentId: env.id,
-                    ),
-              icon: const Icon(Icons.edit_outlined),
-              label: const Text('新增或编辑'),
-            ),
+            if (env.variables.isEmpty)
+              HEmpty(
+                icon: Icons.inbox_outlined,
+                title: '暂无变量',
+                body: readOnly ? null : '点击“新增或编辑”添加第一个变量。',
+              )
+            else
+              for (final v in env.variables)
+                _VarTile(key: ValueKey(v.name), v: v),
           ],
         ),
-        const SizedBox(height: 8),
-        if (env.variables.isEmpty)
-          const _Note('暂无变量。', icon: Icons.inbox_outlined)
-        else
-          for (final v in env.variables) _VarTile(key: ValueKey(v.name), v: v),
-        if (env.role == AccessRole.admin) ...[
-          const SizedBox(height: 12),
-          _Section(
+        if (env.role == AccessRole.admin)
+          HSection(
             title: '管理环境',
+            form: true,
             children: [
               TextField(
                 controller: _name,
@@ -1292,18 +1640,18 @@ class _EnvDetailState extends State<_EnvDetail> {
                     : null,
                 child: const Text('重命名'),
               ),
-              if (why != null) _Note(why, icon: Icons.lock_outline),
-              _Danger(
+              if (why != null) HHint(why, icon: Icons.lock_outline),
+              const Divider(),
+              HDangerButton(
                 label: '删除环境',
                 warning:
-                    '将删除“${env.name}”及其 ${env.variables.length} 个变量，无法撤销。已同步到其他设备的副本不会被远程清除。',
+                    '将删除“${env.name}”及其 ${env.variables.length} 个变量，且无法撤销。已同步到其他设备的副本不会被远程清除。',
                 onConfirm: _canWrite(c, 'deleteEnvironment')
                     ? () => c.deleteEnvironment(env.id)
                     : null,
               ),
             ],
           ),
-        ],
       ],
     );
   }
@@ -1322,30 +1670,52 @@ class _VarTileState extends State<_VarTile> {
   bool _revealed = false;
 
   @override
-  Widget build(BuildContext context) => Card(
-    child: ListTile(
-      title: Text(widget.v.name),
-      subtitle: Text(
-        _revealed ? widget.v.value : '••••••••',
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: HSize.row),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          HSpace.lg,
+          HSpace.md,
+          HSpace.xs,
+          HSpace.md,
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                spacing: HSpace.xxs,
+                children: [
+                  Text(widget.v.name, style: hMono(theme.textTheme.titleSmall)),
+                  HSecret(widget.v.value, revealed: _revealed),
+                ],
+              ),
+            ),
+            IconButton(
+              tooltip: _revealed ? '隐藏值' : '显示值',
+              onPressed: () => setState(() => _revealed = !_revealed),
+              icon: Icon(
+                _revealed
+                    ? Icons.visibility_off_outlined
+                    : Icons.visibility_outlined,
+              ),
+            ),
+          ],
+        ),
       ),
-      trailing: IconButton(
-        tooltip: _revealed ? '隐藏值' : '显示值',
-        onPressed: () => setState(() => _revealed = !_revealed),
-        icon: Icon(_revealed ? Icons.visibility_off : Icons.visibility),
-      ),
-    ),
-  );
+    );
+  }
 }
 
 String? _varNameError(String n, {required bool exists}) {
   if (n.isEmpty) return null;
   if (!RegExp(r'^[A-Za-z_][A-Za-z0-9_]{0,127}$').hasMatch(n)) {
-    return '以字母或下划线开头，仅字母、数字、下划线，最多128个字符';
+    return '以字母或下划线开头，仅限字母、数字和下划线，最多 128 个字符';
   }
   if (n.toUpperCase().startsWith('__HARMONIA_')) return '“__HARMONIA_”为保留前缀';
-  if (exists) return '已存在，请选择该变量进行编辑';
+  if (exists) return '该变量已存在，请在上方选择它进行编辑';
   return null;
 }
 
@@ -1431,69 +1801,93 @@ class _VarEditorState extends State<_VarEditor> {
     final why = env.role == AccessRole.readOnly
         ? '只读权限，不能修改。'
         : _blocked(c, 'setVariable');
-    return _Page(
+    return HPage(
+      narrow: true,
       children: [
-        _Note('环境：${env.name}（${env.role.label}）', icon: Icons.layers_outlined),
-        DropdownButtonFormField<String?>(
-          initialValue: gone ? null : _selected,
-          decoration: const InputDecoration(labelText: '选择变量'),
-          items: [
-            const DropdownMenuItem<String?>(value: null, child: Text('新增变量')),
-            for (final name in names)
-              DropdownMenuItem<String?>(value: name, child: Text(name)),
-          ],
-          onChanged: c.busy ? null : _pick,
-        ),
-        const SizedBox(height: 12),
-        if (gone)
-          const _Note(
-            '所选变量已不存在（可能已被其他设备删除）。',
-            icon: Icons.warning_amber_rounded,
+        HSurface(
+          child: HRow(
+            icon: Icons.layers_outlined,
+            tone: env.role == AccessRole.readOnly
+                ? HTone.success
+                : HTone.accent,
+            label: '所属环境',
+            title: env.name,
+            badge: HPill(env.role.label, icon: _roleIcon(env.role)),
           ),
-        TextField(
-          controller: _name,
-          readOnly: _selected != null,
-          autocorrect: false,
-          enableSuggestions: false,
-          decoration: InputDecoration(
-            labelText: '名称',
-            helperText: _selected != null ? '名称不可修改' : '例如 API_BASE_URL',
-            errorText: err,
-          ),
-          onChanged: (_) => setState(() {}),
         ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _value,
-          obscureText: !_show,
-          autocorrect: false,
-          enableSuggestions: false,
-          enableIMEPersonalizedLearning: false,
-          decoration: InputDecoration(
-            labelText: '值',
-            suffixIcon: IconButton(
-              tooltip: _show ? '隐藏值' : '显示值',
-              onPressed: () => setState(() => _show = !_show),
-              icon: Icon(_show ? Icons.visibility_off : Icons.visibility),
+        HSection(
+          form: true,
+          children: [
+            DropdownButtonFormField<String?>(
+              initialValue: gone ? null : _selected,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: '选择变量'),
+              items: [
+                const DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text('新增变量'),
+                ),
+                for (final name in names)
+                  DropdownMenuItem<String?>(
+                    value: name,
+                    child: Text(name, overflow: TextOverflow.ellipsis),
+                  ),
+              ],
+              onChanged: c.busy ? null : _pick,
             ),
-          ),
+            if (gone)
+              const HNotice('所选变量已不存在，可能已被其他设备删除。', tone: HTone.warning),
+            TextField(
+              controller: _name,
+              readOnly: _selected != null,
+              autocorrect: false,
+              enableSuggestions: false,
+              style: hMono(Theme.of(context).textTheme.bodyLarge),
+              decoration: InputDecoration(
+                labelText: '名称',
+                helperText: _selected != null
+                    ? '已有变量的名称不可修改'
+                    : '例如 API_BASE_URL',
+                errorText: err,
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+            TextField(
+              controller: _value,
+              obscureText: !_show,
+              autocorrect: false,
+              enableSuggestions: false,
+              enableIMEPersonalizedLearning: false,
+              decoration: InputDecoration(
+                labelText: '值',
+                helperText: '保存时校验大小（整个保险库同步数据上限 32 KB）',
+                suffixIcon: IconButton(
+                  tooltip: _show ? '隐藏值' : '显示值',
+                  onPressed: () => setState(() => _show = !_show),
+                  icon: Icon(
+                    _show
+                        ? Icons.visibility_off_outlined
+                        : Icons.visibility_outlined,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
-        const _Note('大小由原生层按 UTF-8 字节最终校验（整个同步数据不超过 32768 字节），此处不做长度承诺。'),
         if (_unverified)
-          const _Note(
-            '未能确认修改已生效。原输入已保留；请先刷新查询结果，再决定是否重试。',
-            icon: Icons.warning_amber_rounded,
+          const HNotice(
+            '无法确认修改是否生效。你的输入已保留，请先刷新确认结果，再决定是否重试。',
+            tone: HTone.warning,
           ),
-        if (why != null) _Note(why, icon: Icons.lock_outline),
+        if (why != null) HHint(why, icon: Icons.lock_outline),
         FilledButton(
           onPressed: why == null && err == null && n.isNotEmpty && !gone
               ? _save
               : null,
           child: const Text('保存'),
         ),
-        if (_selected != null && !gone) ...[
-          const SizedBox(height: 8),
-          _Danger(
+        if (_selected != null && !gone)
+          HDangerButton(
             label: '删除变量',
             warning: '变量 $_selected 将从“${env.name}”中移除。',
             onConfirm:
@@ -1502,7 +1896,6 @@ class _VarEditorState extends State<_VarEditor> {
                 ? _delete
                 : null,
           ),
-        ],
       ],
     );
   }
@@ -1514,51 +1907,60 @@ class _DeviceList extends StatelessWidget {
   final VaultController c;
 
   @override
-  Widget build(BuildContext context) => _Page(
+  Widget build(BuildContext context) => HPage(
     children: [
-      _Section(
+      const HPageTitle('设备'),
+      HSection(
         title: '已授权设备',
         children: [
-          if (c.devices.isEmpty) const Text('暂无设备记录。'),
+          if (c.devices.isEmpty)
+            const HEmpty(icon: Icons.devices_outlined, title: '暂无设备记录'),
           for (final d in c.devices)
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(_platformIcon(d.platform)),
-              title: Text(d.current ? '${d.name}（本机）' : d.name),
-              subtitle: Text('${d.platform} · 有效期：${d.expiresLabel}'),
-              trailing: const Icon(Icons.chevron_right),
+            HRow(
+              icon: _platformIcon(d.platform),
+              title: d.name,
+              badge: d.current ? const HPill('本机', tone: HTone.accent) : null,
+              subtitle: '${d.platform} · 有效期 ${d.expiresLabel}',
               onTap: () => c.navigate(VaultPage.deviceDetail, deviceId: d.id),
             ),
         ],
       ),
-      _Section(
+      HSection(
         title: '授权请求',
         children: [
           if (!c.authorizationRequestsAvailable)
-            _Note(c.requestCapabilityMessage, icon: Icons.construction_outlined)
+            Padding(
+              padding: const EdgeInsets.all(HSpace.lg),
+              child: HHint(
+                c.requestCapabilityMessage,
+                icon: Icons.construction_outlined,
+              ),
+            )
           else if (c.pendingAuthorizationRequests.isEmpty)
-            const Text('没有待处理的请求。')
+            const Padding(
+              padding: EdgeInsets.all(HSpace.lg),
+              child: HHint('没有待处理的请求。', icon: Icons.inbox_outlined),
+            )
           else
             for (final r in c.pendingAuthorizationRequests)
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(_platformIcon(r.platform)),
-                title: Text(r.deviceName),
-                subtitle: Text('${r.platform} · ${_time(r.expiresAt)} 前有效'),
-                trailing: const Icon(Icons.chevron_right),
+              HRow(
+                icon: _platformIcon(r.platform),
+                tone: HTone.warning,
+                title: r.deviceName,
+                subtitle: '${r.platform} · ${_time(r.expiresAt)} 前有效',
                 onTap: () =>
                     c.navigate(VaultPage.deviceDetail, requestId: r.id),
               ),
         ],
       ),
-      _Section(
-        title: '批准新设备',
+      HSection(
         children: [
-          const Text('新设备显示 PairID 与 8 位短码后，可在此手动配对。'),
-          FilledButton.tonalIcon(
-            onPressed: () => c.navigate(VaultPage.approval),
-            icon: const Icon(Icons.how_to_reg_outlined),
-            label: const Text('手动配对'),
+          HRow(
+            icon: Icons.how_to_reg_outlined,
+            tone: HTone.accent,
+            title: '批准新设备',
+            subtitle: '输入新设备上显示的配对 ID 和 8 位短码',
+            onTap: () => c.navigate(VaultPage.approval),
           ),
         ],
       ),
@@ -1584,55 +1986,68 @@ class _DeviceDetail extends StatelessWidget {
     if (rid != null) {
       final r = c.authorizationRequest(rid);
       if (r == null || !_live(r)) return _missing(c, '该授权请求已过期、被撤销或你已无权处理。');
-      return _Page(
+      return HPage(
+        narrow: true,
         children: [
-          _Section(
-            title: '授权请求',
+          HHeader(
+            icon: _platformIcon(r.platform),
+            tone: HTone.warning,
+            title: r.deviceName,
+            body: '请求访问此账号',
+          ),
+          HSection(
             children: [
-              _kv('设备', r.deviceName),
-              _kv('平台', r.platform),
-              _kv('有效至', _time(r.expiresAt)),
-              _kv('序号', '#${r.sequence}'),
-              const _Note('不会自动批准。请在两台设备上核对信息后再继续。', icon: Icons.lock_outline),
-              FilledButton(
-                onPressed: () =>
-                    c.navigate(VaultPage.approval, requestId: r.id),
-                child: const Text('核对并批准'),
-              ),
+              HKeyValue('平台', r.platform),
+              HKeyValue('有效至', _time(r.expiresAt)),
+              HKeyValue('请求序号', '#${r.sequence}'),
             ],
+          ),
+          const HHint('不会自动批准。请在两台设备上核对信息后再继续。', icon: Icons.lock_outline),
+          FilledButton(
+            onPressed: () => c.navigate(VaultPage.approval, requestId: r.id),
+            child: const Text('核对并批准'),
           ),
         ],
       );
     }
     final d = _device(c, deviceId);
     if (d == null) return _missing(c, '该设备已不存在或已被撤销。');
-    return _Page(
+    return HPage(
       children: [
-        _Section(
-          title: d.current ? '${d.name}（本机）' : d.name,
+        HHeader(
+          icon: _platformIcon(d.platform),
+          title: d.name,
+          body: d.current ? '${d.platform} · 本机' : d.platform,
+        ),
+        HSection(
+          title: '访问',
           children: [
-            _kv('平台', d.platform),
-            _kv('访问范围', d.accessSummary),
-            _kv('有效期', d.expiresLabel),
+            HKeyValue('访问范围', d.accessSummary),
+            HKeyValue('有效期', d.expiresLabel),
           ],
         ),
-        _Section(
-          title: '权限',
+        HSection(
+          title: '调整权限',
+          form: true,
           children: [
-            const Text('调整环境角色或有效期需要重新配对，并按新的角色与期限重新批准。'),
+            _muted(context, '调整环境角色或有效期需要重新配对，并按新的设置重新批准。'),
             OutlinedButton(
               onPressed: () => c.navigate(VaultPage.approval, deviceId: d.id),
               child: const Text('重新配对以调整权限'),
             ),
           ],
         ),
-        _Section(
-          title: '撤销',
+        HSection(
+          title: '撤销设备',
+          form: true,
           children: [
-            const Text('撤销需服务器确认后才生效；已同步到该设备的数据无法远程清除。'),
-            _Danger(
+            _muted(context, '撤销经服务器确认后生效；已同步到该设备的数据无法远程清除。'),
+            HDangerButton(
               label: '撤销设备',
-              warning: d.current ? '这是本机，撤销后本机将无法继续同步。' : '确认撤销“${d.name}”？',
+              icon: Icons.link_off,
+              warning: d.current
+                  ? '这是本机，撤销后本机将无法继续同步。'
+                  : '将撤销“${d.name}”的访问权限。',
               onConfirm: _canWrite(c, 'revokeDevice') ? () => _revoke(d) : null,
             ),
           ],
@@ -1673,8 +2088,27 @@ class _ApprovalState extends State<_Approval> {
   bool _checked = false;
   bool _showCode = false;
 
+  late final SensitiveInputGuard _sensitiveInputs;
+  @override
+  void initState() {
+    super.initState();
+    _sensitiveInputs = SensitiveInputGuard(
+      [_code],
+      onCleared: () {
+        if (mounted) {
+          setState(() {
+            _showCode = false;
+            _review = false;
+            _checked = false;
+          });
+        }
+      },
+    );
+  }
+
   @override
   void dispose() {
+    _sensitiveInputs.dispose();
     _code.clear(); // Dart strings cannot be guaranteed wiped; native owns buffers
     _pair.dispose();
     _code.dispose();
@@ -1724,64 +2158,69 @@ class _ApprovalState extends State<_Approval> {
         granted.isNotEmpty;
     if (_review) {
       final why = _blocked(c, 'approveDevice');
-      return _Page(
+      return HPage(
+        narrow: true,
         children: [
-          _Section(
-            title: '请逐项核对',
+          const HHeader(title: '核对批准信息', body: '请在两台设备上逐项核对后再批准。'),
+          HSection(
             children: [
-              _kv('设备', target),
-              _kv('PairID', _pair.text.trim()),
+              HKeyValue('设备', target),
+              HKeyValue('配对 ID', _pair.text.trim(), mono: true),
               for (final e in c.environments)
                 if (granted[e.id] != null)
-                  _kv('环境：${e.name}', granted[e.id]!.label),
-              _kv('有效期', _life.label),
+                  HKeyValue('环境 · ${e.name}', granted[e.id]!.label),
+              HKeyValue('有效期', _life.label),
               CheckboxListTile(
-                contentPadding: EdgeInsets.zero,
                 value: _checked,
-                title: const Text('我已在两台设备上核对设备、环境、角色与期限'),
+                controlAffinity: ListTileControlAffinity.leading,
+                title: const Text('我已在两台设备上核对设备、环境、角色与有效期'),
                 onChanged: (v) => setState(() => _checked = v ?? false),
               ),
             ],
           ),
-          const _Note(
-            '下一步将进行系统验证（设备密码或生物识别）。服务器确认后才算批准；绝不自动批准。',
-            icon: Icons.fingerprint,
-          ),
-          const _Note('结果未确认时请先刷新设备列表，不要重复批准。'),
-          if (why != null) _Note(why, icon: Icons.lock_outline),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              OutlinedButton(
-                onPressed: () => setState(() => _review = false),
-                child: const Text('返回修改'),
-              ),
-              FilledButton(
-                onPressed: _checked && why == null ? _approve : null,
-                child: const Text('系统验证并批准'),
-              ),
-            ],
-          ),
+          _hints(const [
+            HHint(
+              '下一步需要系统验证（设备密码或生物识别）。服务器确认后才算批准，不会自动批准。',
+              icon: Icons.fingerprint,
+            ),
+            HHint('结果不明确时，请先刷新设备列表，不要重复批准。'),
+          ]),
+          if (why != null) HHint(why, icon: Icons.lock_outline),
+          _actions([
+            FilledButton(
+              onPressed: _checked && why == null ? _approve : null,
+              child: const Text('系统验证并批准'),
+            ),
+            OutlinedButton(
+              onPressed: () => setState(() => _review = false),
+              child: const Text('返回修改'),
+            ),
+          ]),
         ],
       );
     }
-    return _Page(
+    return HPage(
+      narrow: true,
       children: [
-        _Note(
+        HNotice(
           req == null && dev == null
-              ? '手动配对：PairID 只是公开配对标识，不代表服务器上存在待批准请求。'
+              ? '手动配对：配对 ID 只是公开标识，不代表服务器上存在待批准的请求。'
               : '目标：$target',
           icon: Icons.devices_other_outlined,
         ),
-        _Section(
+        HSection(
           title: '配对信息',
+          form: true,
           children: [
             TextField(
               controller: _pair,
               autocorrect: false,
               enableSuggestions: false,
-              decoration: const InputDecoration(labelText: 'PairID（公开）'),
+              style: hMono(Theme.of(context).textTheme.bodyLarge),
+              decoration: const InputDecoration(
+                labelText: '配对 ID（PairID）',
+                helperText: '公开标识，显示在新设备上',
+              ),
               onChanged: (_) => setState(() {}),
             ),
             TextField(
@@ -1791,62 +2230,79 @@ class _ApprovalState extends State<_Approval> {
               enableSuggestions: false,
               enableIMEPersonalizedLearning: false,
               keyboardType: TextInputType.number,
+              style: hMono(Theme.of(context).textTheme.bodyLarge),
               inputFormatters: [
                 FilteringTextInputFormatter.digitsOnly,
                 LengthLimitingTextInputFormatter(8),
               ],
               decoration: InputDecoration(
-                labelText: '8 位秘密短码',
-                helperText: '新设备上显示；保留前导零，结束后清空',
+                labelText: '8 位短码',
+                helperText: '显示在新设备上；保留开头的 0，完成后自动清空',
                 suffixIcon: IconButton(
-                  tooltip: _showCode ? '隐藏' : '显示',
+                  tooltip: _showCode ? '隐藏短码' : '显示短码',
                   onPressed: () => setState(() => _showCode = !_showCode),
                   icon: Icon(
-                    _showCode ? Icons.visibility_off : Icons.visibility,
+                    _showCode
+                        ? Icons.visibility_off_outlined
+                        : Icons.visibility_outlined,
                   ),
                 ),
               ),
               onChanged: (_) => setState(() {}),
             ),
-            const _Note('短码只在本机参与配对计算，不发送到服务器。', icon: Icons.lock_outline),
+            const HHint('短码只在本机参与配对计算，不会发送到服务器。', icon: Icons.lock_outline),
           ],
         ),
-        _Section(
-          title: '各环境权限',
+        HSection(
+          title: '环境权限',
+          form: true,
           children: [
-            if (c.environments.isEmpty) const Text('没有可授权的环境。'),
+            if (c.environments.isEmpty) _muted(context, '没有可授权的环境。'),
             for (final e in c.environments)
-              Row(
-                children: [
-                  Expanded(child: Text(e.name)),
-                  DropdownButton<AccessRole?>(
-                    value: _roles[e.id],
-                    hint: const Text('无访问'),
-                    onChanged: (v) => setState(() => _roles[e.id] = v),
-                    items: [
-                      const DropdownMenuItem<AccessRole?>(
-                        value: null,
-                        child: Text('无访问'),
-                      ),
-                      for (final r in AccessRole.values)
-                        DropdownMenuItem<AccessRole?>(
-                          value: r,
-                          child: Text(r.label),
-                        ),
-                    ],
+              DropdownButtonFormField<AccessRole?>(
+                key: ValueKey('role-${e.id}'),
+                initialValue: _roles[e.id],
+                isExpanded: true,
+                decoration: InputDecoration(labelText: e.name),
+                onChanged: (v) => setState(() => _roles[e.id] = v),
+                items: [
+                  const DropdownMenuItem<AccessRole?>(
+                    value: null,
+                    child: Text('无访问'),
                   ),
+                  for (final r in AccessRole.values)
+                    DropdownMenuItem<AccessRole?>(
+                      value: r,
+                      child: Text(r.label),
+                    ),
                 ],
               ),
-            Text('有效期', style: Theme.of(context).textTheme.titleSmall),
-            SegmentedButton<_Lifetime>(
-              segments: [
+          ],
+        ),
+        HSection(
+          title: '有效期',
+          form: true,
+          children: [
+            Wrap(
+              spacing: HSpace.sm,
+              runSpacing: HSpace.sm,
+              children: [
                 for (final l in _Lifetime.values)
-                  ButtonSegment(value: l, label: Text(l.label)),
+                  ChoiceChip(
+                    label: Text(
+                      l.label,
+                      style: _life == l
+                          ? TextStyle(
+                              color: Theme.of(context).colorScheme.hCardInk,
+                            )
+                          : null,
+                    ),
+                    selected: _life == l,
+                    onSelected: (_) => setState(() => _life = l),
+                  ),
               ],
-              selected: {_life},
-              onSelectionChanged: (s) => setState(() => _life = s.first),
             ),
-            const Text('“直到撤销”为永久有效，直到在设备详情中撤销。'),
+            const HHint('“直到撤销”表示长期有效，直到你在设备详情中撤销。'),
           ],
         ),
         FilledButton(
@@ -1869,33 +2325,43 @@ class _Settings extends StatelessWidget {
   final VaultController c;
 
   @override
-  Widget build(BuildContext context) => _Page(
+  Widget build(BuildContext context) => HPage(
     children: [
-      Card(
-        margin: const EdgeInsets.only(bottom: 12),
-        child: ListTile(
-          leading: const Icon(Icons.shield_outlined),
-          title: const Text('账号安全'),
-          subtitle: const Text('登录与设备信任、恢复码管理'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => c.navigate(VaultPage.accountSecurity),
-        ),
-      ),
-      _Section(
-        title: '服务',
+      const HPageTitle('设置'),
+      HSection(
         children: [
-          _kv('服务地址', c.previewMode ? '合成演示，未连接' : c.endpoint),
-          _kv('连接状态', c.phase.label),
+          HRow(
+            icon: Icons.shield_outlined,
+            tone: HTone.accent,
+            title: '账号安全',
+            subtitle: '设备信任、App 锁与恢复码',
+            onTap: () => c.navigate(VaultPage.accountSecurity),
+          ),
         ],
       ),
-      const _Section(
-        title: '实验性实现边界',
+      HSection(
+        title: '服务',
         children: [
-          _Note('加密、设备配对与恢复由独立安全适配器提供，默认失败关闭。', icon: Icons.science_outlined),
-          _Note(
-            '真实保险库尚未就绪；未经安全审计，请勿用于生产凭据。',
-            icon: Icons.warning_amber_rounded,
+          HKeyValue('服务地址', c.previewMode ? '演示模式，未连接服务器' : c.endpoint),
+          HKeyValue('连接状态', _phaseLabel(c.phase)),
+        ],
+      ),
+      const HSection(
+        title: '关于',
+        children: [
+          HRow(
+            icon: Icons.science_outlined,
+            tone: HTone.warning,
+            title: '当前为测试版本',
+            subtitle: '尚未经过独立安全审计，请勿存放生产环境凭据。',
           ),
+        ],
+      ),
+      HDetails(
+        title: '技术信息',
+        children: [
+          HKeyValue('同步检查点', '#${c.checkpoint}'),
+          HKeyValue('连接阶段', c.phase.label),
         ],
       ),
       OutlinedButton.icon(
@@ -1913,33 +2379,45 @@ class _AccountSecurity extends StatelessWidget {
   final VaultController c;
 
   @override
-  Widget build(BuildContext context) => _Page(
+  Widget build(BuildContext context) => HPage(
     children: [
-      const _Section(
+      const HSection(
         title: '身份与设备信任',
         children: [
-          _Note(
-            '账号登录只证明身份；本机能访问保险库，是因为它已被批准为可信设备。',
+          HRow(
             icon: Icons.person_outline,
+            title: '登录只确认账号身份',
+            subtitle: '本机能访问保险库，是因为它已被批准为可信设备。',
           ),
-          _Note('撤销其他设备或调整权限请前往“设备”。'),
-          _Note('App 锁与 PIN 密钥保护尚未实现；PIN 不因系统认证取消、失败或临时锁定而启用。'),
-          SwitchListTile(
-            value: false,
-            onChanged: null,
-            title: Text('进入 App 时验证'),
-            subtitle: Text('需要原生安全存储、限流和真实密钥 provider，当前不可用。'),
+          HRow(
+            icon: Icons.devices_outlined,
+            title: '管理其他设备',
+            subtitle: '撤销设备或调整权限，请前往“设备”。',
           ),
         ],
       ),
-      Card(
-        child: ListTile(
-          leading: const Icon(Icons.health_and_safety_outlined),
-          title: const Text('恢复码管理'),
-          subtitle: Text(c.recoveryStatus),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => c.navigate(VaultPage.recoveryManagement),
-        ),
+      const HSection(
+        title: 'App 锁',
+        children: [
+          SwitchListTile(
+            value: false,
+            onChanged: null,
+            title: Text('打开 App 时验证'),
+            subtitle: Text('此版本暂不支持 App 锁与 PIN。'),
+          ),
+        ],
+      ),
+      HSection(
+        title: '恢复',
+        children: [
+          HRow(
+            icon: Icons.health_and_safety_outlined,
+            tone: HTone.accent,
+            title: '恢复码管理',
+            subtitle: c.recoveryStatus,
+            onTap: () => c.navigate(VaultPage.recoveryManagement),
+          ),
+        ],
       ),
     ],
   );
@@ -1951,40 +2429,36 @@ class _RecoveryManagement extends StatelessWidget {
   final VaultController c;
 
   @override
-  Widget build(BuildContext context) => _Page(
+  Widget build(BuildContext context) => HPage(
     children: [
-      Card(
-        color: Theme.of(context).colorScheme.secondaryContainer,
-        margin: const EdgeInsets.only(bottom: 12),
-        child: ListTile(
-          leading: const Icon(Icons.shield_outlined),
-          title: const Text('恢复状态'),
-          subtitle: Text(c.recoveryStatus),
-        ),
-      ),
-      const _Section(
-        title: '恢复不是备份',
+      HSection(
         children: [
-          Text('恢复码用于在你仍持有它时重新获得保险库访问，它不保存变量内容的副本。'),
-          Text('如果同时丢失所有已授权设备和恢复码，旧保险库将无法恢复，只能新建。'),
+          HRow(
+            icon: Icons.shield_outlined,
+            tone: HTone.accent,
+            title: '恢复状态',
+            subtitle: c.recoveryStatus,
+          ),
         ],
       ),
-      _Section(
+      HSection(
         title: '轮换恢复码',
+        form: true,
         children: [
-          const Text('新恢复码由安全适配器生成并单独显示，需完整重新输入。旧码在服务器确认原子切换后才失效。'),
-          const _Note(
-            '轮换流程尚未接通，当前不可用；界面不会生成或显示新恢复码。',
+          _muted(context, '轮换后需要完整重新输入新恢复码。旧恢复码在服务器确认切换后才失效。'),
+          const HNotice(
+            '此版本暂不支持轮换恢复码，不会生成或显示新的恢复码。',
             icon: Icons.construction_outlined,
           ),
           const FilledButton(onPressed: null, child: Text('开始轮换')),
-          const _Note('结果不确定时，请先查询再决定是否重试。'),
           OutlinedButton(
             onPressed: c.busy ? null : () => unawaited(c.queryRecoveryStatus()),
             child: const Text('查询恢复状态'),
           ),
+          const HHint('结果不明确时，请先查询状态再决定是否重试。'),
         ],
       ),
+      const HHint('恢复码不是备份，不保存变量内容。如果同时丢失所有已授权设备和恢复码，旧保险库将无法恢复，只能新建。'),
     ],
   );
 }
@@ -1993,29 +2467,62 @@ class _PrivacyShield extends StatelessWidget {
   const _PrivacyShield({required this.c});
   final VaultController c;
   @override
-  Widget build(BuildContext context) => Center(
-    child: Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.lock_outline, size: 48),
-          const SizedBox(height: 16),
-          Text(c.privacyLocked ? '应用已锁定' : '隐私保护中'),
-          const SizedBox(height: 12),
-          Text(c.privacyLocked ? '解锁只恢复应用入口，不等于账号登录或设备授权。' : '返回应用前台后继续。'),
-          if (c.privacyLocked)
-            FilledButton(
-              onPressed: c.privacyLockAvailable && !c.busy
-                  ? () => unawaited(c.unlockPrivacy())
-                  : null,
-              child: const Text('验证后解锁'),
-            ),
-          if (c.error != null) Text(c.error!),
-          if (c.privacyLocked && !c.privacyLockAvailable)
-            const Text('原生 App 锁与 PIN 密钥保护尚未接通，当前不能解锁。'),
-        ],
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurfaceVariant;
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(HSpace.xl),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: HSize.formWidth),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Center(
+                child: HIconTile(
+                  Icons.lock_outline,
+                  tone: HTone.accent,
+                  large: true,
+                ),
+              ),
+              const SizedBox(height: HSpace.lg),
+              Text(
+                c.privacyLocked ? '应用已锁定' : '隐私保护中',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.titleLarge,
+              ),
+              const SizedBox(height: HSpace.sm),
+              Text(
+                c.privacyLocked ? '解锁只恢复应用入口，不等于账号登录或设备授权。' : '回到应用后继续。',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(color: muted),
+              ),
+              if (c.privacyLocked) ...[
+                const SizedBox(height: HSpace.xl),
+                FilledButton(
+                  onPressed: c.privacyLockAvailable && !c.busy
+                      ? () => unawaited(c.unlockPrivacy())
+                      : null,
+                  child: const Text('验证后解锁'),
+                ),
+              ],
+              if (c.error != null) ...[
+                const SizedBox(height: HSpace.md),
+                HNotice(c.error!, tone: HTone.danger),
+              ],
+              if (c.privacyLocked && !c.privacyLockAvailable) ...[
+                const SizedBox(height: HSpace.md),
+                Text(
+                  '此版本暂不支持 App 锁，暂时无法解锁。',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodySmall?.copyWith(color: muted),
+                ),
+              ],
+            ],
+          ),
+        ),
       ),
-    ),
-  );
+    );
+  }
 }

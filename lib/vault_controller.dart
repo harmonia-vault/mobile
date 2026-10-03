@@ -86,8 +86,13 @@ class VaultSnapshot {
 }
 
 class GatewayFailure implements Exception {
-  const GatewayFailure(this.message);
+  const GatewayFailure(
+    this.message, {
+    this.suspendVault = false,
+    this.invalidateSession = false,
+  });
   final String message;
+  final bool suspendVault, invalidateSession;
 }
 
 // 界面只提交意图。真实适配必须在 Go 内完成权限检查、签密文、提交和验签拉取。
@@ -281,6 +286,81 @@ class InstanceDescriptor {
   }
 }
 
+/// 公开实例已验证后同步绑定地址；不是设备信任或服务器认证凭据。
+abstract interface class ServerScopeGateway {
+  void bindVerifiedServer(String endpoint);
+}
+
+@immutable
+class AccountRegistration {
+  const AccountRegistration({
+    required this.accountId,
+    required this.accountGeneration,
+    required this.verificationRequired,
+  });
+  final String accountId, accountGeneration;
+  final bool verificationRequired;
+}
+
+@immutable
+class PendingVaultOperation {
+  const PendingVaultOperation({
+    required this.id,
+    required this.operation,
+    required this.environmentId,
+    required this.state,
+    required this.sequence,
+    required this.applied,
+  });
+  final String id, operation, environmentId, state;
+  final int sequence;
+  final bool applied;
+  bool get canRetry => state == 'unknown' || state == 'accepted-not-applied';
+}
+
+abstract interface class BusinessPendingGateway {
+  Future<List<PendingVaultOperation>> businessPendingInfo();
+  Future<PendingVaultOperation> retryBusinessOperation(String id);
+}
+
+@immutable
+class DeviceApprovalProgress {
+  const DeviceApprovalProgress({
+    required this.state,
+    this.pairingId = '',
+    this.sequence = 0,
+  });
+  final String state, pairingId;
+  final int sequence;
+  bool get canRetry => {'prepared', 'unknown', 'approved'}.contains(state);
+  bool get canCancel => state == 'prepared';
+}
+
+abstract interface class ApprovalContinuationGateway {
+  DeviceApprovalProgress get approvalProgress;
+  Future<DeviceApprovalProgress> queryApproval();
+  Future<DeviceApprovalProgress> retryApproval(String originalPairingId);
+  Future<void> cancelApproval(String originalPairingId);
+}
+
+abstract interface class EmailProofGateway {
+  Future<void> verifyEmail(
+    AccountRegistration registration,
+    String challengeId,
+    String token,
+  );
+}
+
+abstract interface class InitializationGateway {
+  Future<String> beginInitialization(
+    String email,
+    String password,
+    String name,
+  );
+  Future<VaultSession> completeInitialization(String fullCodeReentry);
+  Future<String> queryInitialization();
+}
+
 abstract interface class InstanceConnectionGateway {
   Future<InstanceDescriptor> inspectInstance(String endpoint);
 }
@@ -313,6 +393,7 @@ enum VaultPage {
   entry,
   login,
   registration,
+  emailProof,
   recovery,
   initialization,
   authorization,
@@ -385,7 +466,7 @@ abstract interface class SessionVaultGateway implements VaultGateway {
   Set<String> get capabilities;
   Future<void> initialize(String endpoint);
   Future<AccountAuthentication> loginAccount(String email, String password);
-  Future<void> registerAccount(String email, String password);
+  Future<AccountRegistration> registerAccount(String email, String password);
   Future<VaultSession> restoreSession();
   Future<void> logout();
   Future<List<AuthorizationRequest>> authorizationRequests();
@@ -403,6 +484,14 @@ class VaultController extends ChangeNotifier {
   final bool allowPreview;
   final DateTime Function() _now;
   bool _privacyMask = false, _privacyLocked = false, _privacyUnlocking = false;
+  bool _vaultSuspended = false;
+  AccountRegistration? _registration;
+  String? _initializationCode;
+  String _initializationState = 'none';
+  DeviceApprovalProgress _approvalProgress = const DeviceApprovalProgress(
+    state: 'none',
+  );
+  List<PendingVaultOperation> _businessPending = const [];
   bool _busy = false,
       _disposed = false,
       _foreground = true,
@@ -432,6 +521,12 @@ class VaultController extends ChangeNotifier {
   bool get privacyLocked => _privacyLocked;
   bool get privacyLockAvailable => gateway is AppPrivacyGateway;
   bool get serverVerified => _instance != null;
+  AccountRegistration? get registration => _registration;
+  String? get initializationCode => _initializationCode;
+  String get initializationState => _initializationState;
+  List<PendingVaultOperation> get businessPending => _businessPending;
+  bool get vaultSuspended => _vaultSuspended;
+  DeviceApprovalProgress get approvalProgress => _approvalProgress;
   bool get registrationAvailable =>
       _instance != null &&
       (_instance!.initialRegistrationAvailable || _instance!.allowRegistration);
@@ -441,6 +536,7 @@ class VaultController extends ChangeNotifier {
   bool get previewMode => _session.stage == SessionStage.preview;
   bool get previewAvailable => allowPreview && gateway.synthetic;
   bool get canEnterVault =>
+      !_vaultSuspended &&
       !_privacyMask &&
       !_privacyLocked &&
       (_session.stage == SessionStage.trusted || previewMode);
@@ -518,7 +614,28 @@ class VaultController extends ChangeNotifier {
     try {
       await operation(epoch);
     } on GatewayFailure catch (failure) {
-      if (epoch == _epoch) _error = failure.message;
+      if (epoch == _epoch) {
+        if (failure.invalidateSession) _resetLocalSession();
+        if (failure.suspendVault) {
+          _vaultSuspended = true;
+          _snapshot = VaultSnapshot(
+            checkpoint: 0,
+            environments: const [],
+            devices: const [],
+          );
+          _phase = ConnectionPhase.blocked;
+        }
+        if (!failure.invalidateSession &&
+            gateway is ApprovalContinuationGateway) {
+          _approvalProgress =
+              (gateway as ApprovalContinuationGateway).approvalProgress;
+          if (_approvalProgress.state != 'none' &&
+              _approvalProgress.state != 'complete') {
+            _suspendVault();
+          }
+        }
+        _error = failure.message;
+      }
     } catch (_) {
       if (epoch == _epoch) _error = '操作未完成。先查询原操作；未确认任何云端变更。';
     } finally {
@@ -530,8 +647,24 @@ class VaultController extends ChangeNotifier {
     }
   }
 
+  void _suspendVault() {
+    _vaultSuspended = true;
+    _snapshot = VaultSnapshot(
+      checkpoint: 0,
+      environments: const [],
+      devices: const [],
+    );
+    _phase = ConnectionPhase.blocked;
+  }
+
   void _resetLocalSession() {
     _epoch++;
+    _vaultSuspended = false;
+    _registration = null;
+    _initializationCode = null;
+    _initializationState = 'none';
+    _approvalProgress = const DeviceApprovalProgress(state: 'none');
+    _businessPending = const [];
     _session = const VaultSession(SessionStage.signedOut);
     _snapshot = VaultSnapshot(
       checkpoint: 0,
@@ -564,6 +697,7 @@ class VaultController extends ChangeNotifier {
       _activePrompt = null;
     }
     _session = session;
+    _vaultSuspended = false;
     _snapshot = VaultSnapshot(
       checkpoint: 0,
       environments: const [],
@@ -601,6 +735,9 @@ class VaultController extends ChangeNotifier {
     final verified = await (gateway as InstanceConnectionGateway)
         .inspectInstance(candidate.toString());
     if (epoch != _epoch) return;
+    if (gateway is ServerScopeGateway) {
+      (gateway as ServerScopeGateway).bindVerifiedServer(candidate.toString());
+    }
     _endpoint = candidate.toString();
     _instance = verified;
     _locations
@@ -654,6 +791,11 @@ class VaultController extends ChangeNotifier {
       return _session.stage == SessionStage.signedOut &&
           serverVerified &&
           (next.page != VaultPage.registration || registrationAvailable);
+    }
+    if (next.page == VaultPage.emailProof) {
+      return _session.stage == SessionStage.signedOut &&
+          serverVerified &&
+          _registration?.verificationRequired == true;
     }
     if (next.page == VaultPage.recovery) {
       return _session.stage == SessionStage.signedOut && serverVerified ||
@@ -813,8 +955,163 @@ class VaultController extends ChangeNotifier {
             !supports('registerAccount')) {
           throw const GatewayFailure('注册界面尚未接通真实业务，未发送邮箱或密码。');
         }
-        await (gateway as SessionVaultGateway).registerAccount(email, password);
+        final registered = await (gateway as SessionVaultGateway)
+            .registerAccount(email, password);
+        if (epoch != _epoch) return;
+        _registration = registered;
+        if (registered.verificationRequired) {
+          _locations.add(const VaultLocation(VaultPage.emailProof));
+          return;
+        }
+        _applySession(const VaultSession(SessionStage.deviceAuthorization));
+        _locations.add(const VaultLocation(VaultPage.initialization));
       });
+
+  Future<void> verifyRegistrationEmail(String challengeId, String token) =>
+      _run((epoch) async {
+        final registered = _registration;
+        if (!serverVerified ||
+            registered == null ||
+            !registered.verificationRequired ||
+            !supports('verifyEmail') ||
+            gateway is! EmailProofGateway) {
+          throw const GatewayFailure('邮件证明适配尚未验收，未发送证明。');
+        }
+        if (!RegExp(r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$')
+                .hasMatch(challengeId) ||
+            token.isEmpty ||
+            utf8.encode(token).length > 16384) {
+          throw const GatewayFailure('请输入邮件中的挑战 ID 和一次证明 token。');
+        }
+        await (gateway as EmailProofGateway).verifyEmail(
+          registered,
+          challengeId,
+          token,
+        );
+        if (epoch != _epoch) return;
+        _registration = AccountRegistration(
+          accountId: registered.accountId,
+          accountGeneration: registered.accountGeneration,
+          verificationRequired: false,
+        );
+        _applySession(const VaultSession(SessionStage.deviceAuthorization));
+        _locations.add(const VaultLocation(VaultPage.initialization));
+      });
+
+  Future<void> beginInitialization(
+    String email,
+    String password,
+    String name,
+  ) => _run((epoch) async {
+    if (_session.stage != SessionStage.deviceAuthorization ||
+        !supports('beginInitialization') ||
+        gateway is! InitializationGateway) {
+      throw const GatewayFailure('首台设备初始化尚未验收，未发送密码或生成新码。');
+    }
+    if (_initializationState != 'none') {
+      throw const GatewayFailure('已有原初始化意图；请查询或完整重输原新码，不能另建。');
+    }
+    final cleanName = _environmentName(name);
+    _initializationState = 'unknown';
+    final code = await (gateway as InitializationGateway).beginInitialization(
+      email,
+      password,
+      cleanName,
+    );
+    if (epoch != _epoch) return;
+    _initializationCode = code;
+    _initializationState = 'pending-full-reentry';
+  });
+
+  Future<void> completeInitialization(String fullCodeReentry) =>
+      _run((epoch) async {
+        if (_session.stage != SessionStage.deviceAuthorization ||
+            !supports('completeInitialization') ||
+            gateway is! InitializationGateway ||
+            _initializationState == 'none') {
+          throw const GatewayFailure('没有可继续的已验首机初始化意图。');
+        }
+        final session = await (gateway as InitializationGateway)
+            .completeInitialization(fullCodeReentry);
+        if (epoch != _epoch) return;
+        _initializationCode = null;
+        _initializationState = 'complete';
+        _applySession(session);
+        await _pull(epoch);
+      });
+
+  Future<void> queryInitialization() => _run((epoch) async {
+    if (!supports('queryInitialization') || gateway is! InitializationGateway) {
+      throw const GatewayFailure('原初始化状态查询尚未接通。');
+    }
+    final state = await (gateway as InitializationGateway)
+        .queryInitialization();
+    if (epoch != _epoch) return;
+    _initializationState = state;
+  });
+
+  Future<void> resumeInitialization() => _run((epoch) async {
+    if (!serverVerified ||
+        !supports('queryInitialization') ||
+        gateway is! InitializationGateway) {
+      throw const GatewayFailure('原首机初始化查询尚未接通。');
+    }
+    final state = await (gateway as InitializationGateway)
+        .queryInitialization();
+    if (epoch != _epoch) return;
+    if (!{'pending', 'absent', 'complete'}.contains(state)) {
+      throw const GatewayFailure('本机没有可继续的原首机初始化；没有创建新意图。');
+    }
+    _applySession(const VaultSession(SessionStage.deviceAuthorization));
+    _initializationState = state;
+    _locations.add(const VaultLocation(VaultPage.initialization));
+  });
+
+  Future<void> queryBusinessPending() => _run((epoch) async {
+    if (!supports('businessPendingInfo') ||
+        gateway is! BusinessPendingGateway) {
+      throw const GatewayFailure('原操作查询尚未验收，未生成新 ID。');
+    }
+    final pending = await (gateway as BusinessPendingGateway)
+        .businessPendingInfo();
+    if (epoch != _epoch) return;
+    _businessPending = List.unmodifiable(pending);
+    if (_vaultSuspended &&
+        !pending.any((item) => item.canRetry) &&
+        supports('restoreSession')) {
+      final session = await (gateway as SessionVaultGateway).restoreSession();
+      if (epoch != _epoch) return;
+      _applySession(session);
+      await _pull(epoch);
+    }
+  });
+
+  Future<void> retryBusinessPending(String id) => _run((epoch) async {
+    if (!supports('retryBusinessOperation') ||
+        gateway is! BusinessPendingGateway ||
+        !_businessPending.any((item) => item.id == id && item.canRetry)) {
+      throw const GatewayFailure('仅可续办已核验列表中的原操作 ID。');
+    }
+    final resolved = await (gateway as BusinessPendingGateway)
+        .retryBusinessOperation(id);
+    if (epoch != _epoch) return;
+    _businessPending = List.unmodifiable([
+      for (final item in _businessPending) item.id == id ? resolved : item,
+    ]);
+    if (!resolved.applied) {
+      throw const GatewayFailure(
+        '原操作尚未完成验签下发与密封保存；不能报告成功。',
+        suspendVault: true,
+      );
+    }
+    if (!supports('restoreSession')) {
+      throw const GatewayFailure('原操作已保存，可信视图恢复尚未接通。');
+    }
+    final session = await (gateway as SessionVaultGateway).restoreSession();
+    if (epoch != _epoch) return;
+    _applySession(session);
+    await _pull(epoch);
+  });
 
   String _environmentName(String name) {
     final clean = name.trim();
@@ -931,7 +1228,66 @@ class VaultController extends ChangeNotifier {
       throw const GatewayFailure('需独立 PairID、8位数字秘密短码及明确环境权限。');
     }
     await (gateway as SessionVaultGateway).approve(draft);
+    if (epoch != _epoch) return;
+    if (gateway is ApprovalContinuationGateway) {
+      _approvalProgress =
+          (gateway as ApprovalContinuationGateway).approvalProgress;
+      if (_approvalProgress.state != 'complete') _suspendVault();
+    }
   });
+  Future<void> queryApproval() => _run((epoch) async {
+    if (!supports('queryApproval') || gateway is! ApprovalContinuationGateway) {
+      throw const GatewayFailure('原审批状态查询尚未接通。');
+    }
+    final status = await (gateway as ApprovalContinuationGateway)
+        .queryApproval();
+    if (epoch != _epoch) return;
+    _approvalProgress = status;
+    if (status.state == 'none' || status.state == 'complete') {
+      final session = await (gateway as SessionVaultGateway).restoreSession();
+      if (epoch != _epoch) return;
+      _applySession(session);
+      await _pull(epoch);
+    }
+  });
+  Future<void> retryApproval() => _run((epoch) async {
+    if (!supports('retryApproval') ||
+        gateway is! ApprovalContinuationGateway ||
+        !_approvalProgress.canRetry ||
+        _approvalProgress.pairingId.isEmpty) {
+      throw const GatewayFailure('只有原审批ID可以查询并续办，不生成新签名。');
+    }
+    final status = await (gateway as ApprovalContinuationGateway).retryApproval(
+      _approvalProgress.pairingId,
+    );
+    if (epoch != _epoch) return;
+    _approvalProgress = status;
+    if (status.state != 'complete') {
+      throw const GatewayFailure('管理者审批已提交，对方设备完成仍未确认。', suspendVault: true);
+    }
+    final session = await (gateway as SessionVaultGateway).restoreSession();
+    if (epoch != _epoch) return;
+    _applySession(session);
+    await _pull(epoch);
+  });
+  Future<void> cancelApproval() => _run((epoch) async {
+    if (!supports('cancelApproval') ||
+        gateway is! ApprovalContinuationGateway ||
+        !_approvalProgress.canCancel ||
+        _approvalProgress.pairingId.isEmpty) {
+      throw const GatewayFailure('仅未尝试HTTP的prepared原审批可取消。');
+    }
+    await (gateway as ApprovalContinuationGateway).cancelApproval(
+      _approvalProgress.pairingId,
+    );
+    if (epoch != _epoch) return;
+    _approvalProgress = const DeviceApprovalProgress(state: 'none');
+    final session = await (gateway as SessionVaultGateway).restoreSession();
+    if (epoch != _epoch) return;
+    _applySession(session);
+    await _pull(epoch);
+  });
+
   Future<void> revokeDevice(String id) => _run((epoch) async {
     if (!canEnterVault || !supports('revokeDevice')) {
       throw const GatewayFailure('设备撤销适配尚未接通，未执行撤销。');
