@@ -520,6 +520,47 @@ class VaultController extends ChangeNotifier {
   final Set<String> _prompted = {};
   final List<String> _promptQueue = [];
 
+  // 仅控制当前表单RAM寿命，不是认证成功或授权信号。
+  Timer? _formRetentionTimer;
+  bool _retainedForm = false;
+  int _formLifetime = 0;
+  String get sensitiveFormScope =>
+      '$_epoch|$_formLifetime|${_session.accountId}|${_session.accountGeneration}|$_endpoint|${_session.stage.name}';
+  bool get retainSensitiveForm =>
+      _retainedForm &&
+      _privacyMask &&
+      _foreground &&
+      !_privacyLocked &&
+      !_vaultSuspended &&
+      !_disposed &&
+      !_nativeCleanupPending;
+  void _retireSensitiveForm() {
+    _formRetentionTimer?.cancel();
+    _formRetentionTimer = null;
+    _retainedForm = false;
+    _formLifetime++;
+  }
+
+  void _boundFormRetention(Duration duration) {
+    _formRetentionTimer?.cancel();
+    _formRetentionTimer = Timer(duration, () {
+      _retireSensitiveForm();
+      _notify();
+    });
+  }
+
+  bool _accessReduced(VaultSnapshot previous, VaultSnapshot next) {
+    final selected = location.environmentId;
+    final current = {for (final e in next.environments) e.id: e};
+    for (final e in previous.environments) {
+      // 当前环境编辑器只因自身失权退役；无关环境删除不丢其草稿。
+      if (selected != null && e.id != selected) continue;
+      final updated = current[e.id];
+      if (updated == null || updated.role.index < e.role.index) return true;
+    }
+    return false;
+  }
+
   bool get privacyObscured => _privacyMask || _privacyLocked;
   bool get privacyLocked => _privacyLocked;
   bool get privacyLockAvailable => gateway is AppPrivacyGateway;
@@ -664,6 +705,7 @@ class VaultController extends ChangeNotifier {
       if (epoch == _epoch) {
         if (failure.invalidateSession) _resetLocalSession();
         if (failure.suspendVault) {
+          _retireSensitiveForm();
           _vaultSuspended = true;
           _snapshot = VaultSnapshot(
             checkpoint: 0,
@@ -689,12 +731,17 @@ class VaultController extends ChangeNotifier {
       if (_activeOperation == token) {
         _busy = false;
         _activeOperation = null;
+        if (_retainedForm && _privacyMask) {
+          // 原生结果先于resumed时，与前台等待相同的五秒上限。
+          _boundFormRetention(const Duration(seconds: 5));
+        }
       }
       _notify();
     }
   }
 
   void _suspendVault() {
+    _retireSensitiveForm();
     _vaultSuspended = true;
     _snapshot = VaultSnapshot(
       checkpoint: 0,
@@ -705,6 +752,7 @@ class VaultController extends ChangeNotifier {
   }
 
   void _resetLocalSession() {
+    _retireSensitiveForm();
     _epoch++;
     _vaultSuspended = false;
     _registration = null;
@@ -730,6 +778,7 @@ class VaultController extends ChangeNotifier {
   }
 
   void _applySession(VaultSession session) {
+    _retireSensitiveForm();
     if (session.stage == SessionStage.preview ||
         session.stage == SessionStage.trusted &&
             (session.accountId.isEmpty || session.accountGeneration.isEmpty)) {
@@ -785,6 +834,7 @@ class VaultController extends ChangeNotifier {
     if (gateway is ServerScopeGateway) {
       (gateway as ServerScopeGateway).bindVerifiedServer(candidate.toString());
     }
+    _retireSensitiveForm();
     _endpoint = candidate.toString();
     _instance = verified;
     if (gateway is LocalProtectionGateway) {
@@ -806,6 +856,7 @@ class VaultController extends ChangeNotifier {
         _nativeCleanupPending) {
       return false;
     }
+    _retireSensitiveForm();
     _instance = null;
     _locations
       ..clear()
@@ -992,6 +1043,10 @@ class VaultController extends ChangeNotifier {
     if (_disposed || epoch != _epoch || !canEnterVault) return;
     if (pulled.checkpoint < _snapshot.checkpoint) {
       throw const GatewayFailure('返回的检查点倒退，已拒绝更新。');
+    }
+    if (_accessReduced(_snapshot, pulled)) {
+      // 同账号的撤销/降权/环境消失同样终止旧表单，不能只检查trusted。
+      _retireSensitiveForm();
     }
     _snapshot = pulled;
     _phase = previewMode ? ConnectionPhase.preview : ConnectionPhase.online;
@@ -1297,6 +1352,7 @@ class VaultController extends ChangeNotifier {
         candidate.hasFragment) {
       throw const GatewayFailure('请输入 HTTPS 服务地址，不得包含凭据、查询参数或片段。');
     }
+    _retireSensitiveForm();
     _endpoint = candidate.toString();
     _instance = null;
     _phase = ConnectionPhase.blocked;
@@ -1436,12 +1492,24 @@ class VaultController extends ChangeNotifier {
 
   void onLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.inactive) {
+      if (!_retainedForm &&
+          _busy &&
+          _activeOperation != null &&
+          _foreground &&
+          !_privacyLocked &&
+          !_vaultSuspended &&
+          !_nativeCleanupPending) {
+        _retainedForm = true;
+        // 本次表单内存寿命上限；不是原生认证期限或认证已验。
+        _boundFormRetention(const Duration(seconds: 120));
+      }
       _privacyMask = true;
       _notify();
       return;
     }
     if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.hidden) {
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached) {
       _privacyMask = true;
       final status = gateway is AppPrivacyGateway
           ? (gateway as AppPrivacyGateway).privacyStatus
@@ -1454,6 +1522,9 @@ class VaultController extends ChangeNotifier {
       return;
     }
     if (state == AppLifecycleState.resumed) {
+      _formRetentionTimer?.cancel();
+      _formRetentionTimer = null;
+      _retainedForm = false;
       _privacyMask = false;
       setForeground(true);
       _notify();
@@ -1487,6 +1558,7 @@ class VaultController extends ChangeNotifier {
 
   void setForeground(bool value) {
     _foreground = value;
+    if (!value) _retireSensitiveForm();
     if (value) {
       unawaited(refreshAuthorizationRequests());
     }

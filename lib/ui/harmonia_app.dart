@@ -288,6 +288,9 @@ class _RootState extends State<_Root> with WidgetsBindingObserver {
   String _lastKey = '';
   Timer? _expiry;
   bool _scheduled = false;
+  Widget? _formBody;
+  String? _formScope;
+  VaultPage? _formPage;
 
   static const _tabs = [
     (Icons.layers_outlined, Icons.layers, '环境', VaultPage.environments),
@@ -317,6 +320,9 @@ class _RootState extends State<_Root> with WidgetsBindingObserver {
     c.removeListener(_onChange);
     WidgetsBinding.instance.removeObserver(this);
     _expiry?.cancel();
+    _formBody = null;
+    _formScope = null;
+    _formPage = null;
     super.dispose();
   }
 
@@ -413,7 +419,21 @@ class _RootState extends State<_Root> with WidgetsBindingObserver {
     animation: c,
     builder: (context, _) {
       final scheme = Theme.of(context).colorScheme;
-      final page = c.privacyObscured ? null : _resolve(c);
+      final scope = '${c.sensitiveFormScope}|${_locKey(c.location)}';
+      final keepForm =
+          c.privacyObscured && c.retainSensitiveForm && _formScope == scope;
+      final page = c.privacyObscured
+          ? (keepForm ? _formPage : null)
+          : _resolve(c);
+      if (!c.privacyObscured) {
+        _formBody = _body(c, page);
+        _formScope = scope;
+        _formPage = page;
+      } else if (!keepForm) {
+        _formBody = null;
+        _formScope = null;
+        _formPage = null;
+      }
       final tab = page == null ? null : _tabOf(page);
       // Tab roots render their own large page title.
       final root = tab != null && page == _tabs[tab].$4;
@@ -422,8 +442,29 @@ class _RootState extends State<_Root> with WidgetsBindingObserver {
         c: c,
         vault: tab != null,
         child: KeyedSubtree(
-          key: ValueKey('${c.sessionStage.name}|${_locKey(c.location)}'),
-          child: c.privacyObscured ? _PrivacyShield(c: c) : _body(c, page),
+          key: ValueKey(scope),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Offstage(
+                offstage: c.privacyObscured,
+                child: ExcludeFocus(
+                  excluding: c.privacyObscured,
+                  child: ExcludeSemantics(
+                    excluding: c.privacyObscured,
+                    child: IgnorePointer(
+                      ignoring: c.privacyObscured,
+                      child: TickerMode(
+                        enabled: !c.privacyObscured,
+                        child: _formBody ?? const SizedBox.shrink(),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              if (c.privacyObscured) _PrivacyShield(c: c),
+            ],
+          ),
         ),
       );
       return PopScope<Object?>(
