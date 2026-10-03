@@ -1,0 +1,185 @@
+{
+  "version": 1,
+  "dateUTC": "2026-10-03",
+  "status": "PASS",
+  "case": "android-product-cold-original-id-4469",
+  "scope": "真实Flutter产品入口、首机初始化作为前置；单笔accepted502 mutation、force-stop、取消、同原ID明确续办、验签Pull、正式退出；不重复完整CRUD或CLI矩阵",
+  "provenance": {
+    "mobilePublicBase": "1cb839883577f6a23a78408112198424cb2b437f",
+    "productSourceOverlaySHA256": {
+      "lib/vault_controller.dart": "577f4863d145816e1a4779cbc0582014bdbd3b897bf9a5563491b8a6e4ec007e",
+      "lib/native/native_vault_gateway.dart": "aadb20c4da13893b826bce75065b21a9c04bf85d8cd7ec905a5d0867cc7bb490",
+      "test/native_restore_pending_state_test.dart": "71c25214aa4be347601395d958959cf68984e244c4facc0dc7ba16981fd00a25"
+    },
+    "coreAARPublicBase": "b094a933bf1922347b4a41ea8baaa5699ffbf5c1",
+    "AARSHA256": "fb9664f6ccc13707367a12e64f28663fc17018ff4d8bb044ea37d913be2e1d0b",
+    "serverPublicCommit": "bd86fec6215b6f7149234578e7bf5dc764a639c2",
+    "fixtureHelperSHA256": "2aa7463c28e3470766922683b595a8c8d3ed9b0343da43676f6ba39c096dafe3",
+    "driverSourceSHA256": {
+      "ProductQaCommand.kt": "10588a1177af6bcd817e8f10ad9f325a2d7de68b4cfc5fa1242eb6f5de7720e2",
+      "NativeProductUiDriverTest.kt": "6a7b3564a3f49d7a796b4e6f175d1b23d3c536320d895d1092513802f35b4ae6",
+      "ProductSystemCredentialFixture.kt": "830c2dbd710a9842423eb0ec14fb276cdbc2dd588cafce51b9ad792ae9d366ed"
+    },
+    "hostSHA256": "91c93b800f09bb994da0ea1e98995be5a32e382a4997aa25abb03063317a0a0a",
+    "productionInputManifestSHA256": "867a040848c7bd3f587ae57f431002307182c908c2dbc0ae231fbc8bc2e27463",
+    "fixturePublicConfigSHA256": "fcc4d42ad849cc636716449fdde867cdca1eb473d1bdb9802e079c8628db0906",
+    "fixturePort": 4469,
+    "appAPK": {
+      "basename": "harmonia-pending-productfixture-debug.apk",
+      "sha256": "bf30da211aa31b811e26a8bdd9b067037b817e658cd2b152ff6823814833ecde"
+    },
+    "testAPK": {
+      "basename": "harmonia-pending-productqa-test.apk",
+      "sha256": "987ad3654aa6773763692a10aff6102d7b3c89d1f88dccfdb040fb59695d99b1"
+    },
+    "compileSDK": 36,
+    "runtimeAndroidAPI": 34,
+    "ABI": "arm64-v8a",
+    "newerGoPINAndDAGNativeNotRetested": true,
+    "sourceChangesAfterBuild": []
+  },
+  "validation": {
+    "preFixRegression": "FAIL：controller未收到已解析pending列表",
+    "newBusinessCases": 8,
+    "allBusinessTests": 98,
+    "allBusinessTestsProcessSeconds": 8.893682374997297,
+    "finalStaticAnalysis": {
+      "result": "No issues found",
+      "reportedSeconds": 1.9,
+      "processSeconds": 2.7963698329986073
+    },
+    "wholeRunSeconds": 83.527,
+    "expectedCredentialInputs": 18,
+    "actualCredentialInputs": 18,
+    "expectedCancelledCredentialWindows": 1,
+    "actualCancelledCredentialWindows": 1
+  },
+  "stages": {
+    "registrationAndEmailProof": "PASS",
+    "initializationBootAndPull": "PASS",
+    "oneAcceptedResponseLost": "PASS",
+    "actualForceStop": true,
+    "cancelDoesNotUnlockOrDiscardProtectedState": "PASS",
+    "originalIdPreservedAfterColdRestart": "PASS",
+    "originalIdAppliedVerifiedPull": "PASS",
+    "sameMutationOnlyOnePOST": true,
+    "formalLogout": "PASS",
+    "fullCRUDMatrix": "UNRUN",
+    "CLI": "UNRUN"
+  },
+  "originalPendingIdSHA256": "74c992f8a72ccfe0702b0c3afd20d646c6d4d8cc6136a48ef2cbaaafbe52b394",
+  "beforeCounters": {
+    "approvalV3Accepted": 0,
+    "approvalV3Attempts": 0,
+    "bootAccepted": 0,
+    "emailProofAccepted": 0,
+    "emailProofAttempts": 0,
+    "environmentAccepted": 0,
+    "environmentAttempts": 0,
+    "initializationAccepted": 0,
+    "instanceInfo": 1,
+    "loginAccepted": 0,
+    "loginAttempts": 0,
+    "mutationAccepted": 0,
+    "mutationAttempts": 0,
+    "pullAccepted": 0,
+    "registerAccepted": 0,
+    "registerAttempts": 0
+  },
+  "lostResponseCounters": {
+    "approvalV3Accepted": 0,
+    "approvalV3Attempts": 0,
+    "bootAccepted": 3,
+    "emailProofAccepted": 1,
+    "emailProofAttempts": 1,
+    "environmentAccepted": 1,
+    "environmentAttempts": 1,
+    "initializationAccepted": 1,
+    "instanceInfo": 2,
+    "loginAccepted": 1,
+    "loginAttempts": 1,
+    "mutationAccepted": 1,
+    "mutationAttempts": 1,
+    "pullAccepted": 7,
+    "registerAccepted": 1,
+    "registerAttempts": 1
+  },
+  "finalCounters": {
+    "approvalV3Accepted": 0,
+    "approvalV3Attempts": 0,
+    "bootAccepted": 5,
+    "emailProofAccepted": 1,
+    "emailProofAttempts": 1,
+    "environmentAccepted": 1,
+    "environmentAttempts": 1,
+    "initializationAccepted": 1,
+    "instanceInfo": 3,
+    "loginAccepted": 1,
+    "loginAttempts": 1,
+    "mutationAccepted": 1,
+    "mutationAttempts": 1,
+    "pullAccepted": 11,
+    "registerAccepted": 1,
+    "registerAttempts": 1
+  },
+  "cleanup": {
+    "status": "PASS",
+    "SDKFinallyNoSecureVerified": true,
+    "ownPackagesRemoved": true,
+    "ownFixtureStopped": true,
+    "fixturePortClosed": true,
+    "forwardRemoved": true,
+    "previewPreserved": true,
+    "previewSHA256": "4d3efb2d745734664a28f1725855eb73da8b963f5bfea2884668de0a88611c66",
+    "AVDPreserved": true,
+    "liveNormalAARPreserved": true,
+    "liveNormalAARSHA256": "7af225529d2d5cea6c435e28f568e7d3a3cd523688ed8a966be16dd1dfed1e08"
+  },
+  "privateRawEvidenceSHA256": {
+    "product-userflow-result.json": "7c53102a63fc368a36c7ed52b03c19284583bb59bd9b818202e3c60a68ff0b44",
+    "actual-run-metadata.json": "6f6a527d9062d136010c69de5c4cb9d04442ab7ccdc3745539dfc3f08fed0f1c",
+    "actual-userflow-output.txt": "97b140a6bc7b1ae8bc256e753e1c6de32c34bb7e3919eb0508cf8c54570fa3e1",
+    "OWNED-CLEANUP.json": "2f325a222531af18aed217e17b119ff4ba352096a95191b8f334b6f7c1450650",
+    "INSTALL-BASELINE.json": "873a9c15a9810e2170dac49f738b686892b3a2403b195d9d040909625d466dfb",
+    "TLS-SMOKE.json": "cb7140a1d7c7a89e121c1ba44a97101d9a4a44e6c19f733be6ef29b408a3eca6",
+    "runtime-build/source-manifest.json": "867a040848c7bd3f587ae57f431002307182c908c2dbc0ae231fbc8bc2e27463",
+    "runtime-build/artifacts.json": "34d1046a6ef902f04e7567249ae0c0041605f6201617a363f186a84465fdd91a",
+    "runtime-build/build-results.json": "cc4451d99e2a47baf712c306cdfb01127feb7b69ea8122fb6e177bf4c2a2e383",
+    "runtime-build/main-build.txt": "291696a59e6843ecd8f75eb547c0b5f476c9ce408a321469c3aab82eefad57cd",
+    "runtime-build/test-build.txt": "de9f78206a4871a97ba7a1eb7eab3c7c93b19f8f27792797c0d950cd6a998bc7",
+    "runtime-build/appAPK-badging.txt": "831f0acb38e01ff4bdacb2d0a0a5170a67071abcfecb2c400dee6f3d2c2afd24",
+    "runtime-build/testAPK-badging.txt": "0868c64feb85de192ea165d98dfa0c520081d266ab3d8f5154f4274faecc2368"
+  },
+  "historicalFailuresPreserved": [
+    {
+      "case": "4465-single-back-cancel",
+      "wholeStatus": "FAIL",
+      "manifestSHA256": "24cff9d5081218b5ae9df79f7d45c9a904474363ee1cf051a4a2f50d98d0e78b"
+    },
+    {
+      "case": "4467-cold-pending-entry-hidden",
+      "wholeStatus": "FAIL",
+      "manifestSHA256": "d10832a61fe40d67d2a3537c8bd89a61488b4078e89a4df5dd2bcd39fe17c0ac"
+    }
+  ],
+  "screenshots": {
+    "publication": "不上传本轮近似Settings画面；仅保留私有安全截图",
+    "hashes": [
+      {
+        "basename": "initial-public-settings.png",
+        "sha256": "21fad6bfc2c77bb2a37142e2e13c39167448a5a853bc709a3d1f545dcd5c1fe6"
+      },
+      {
+        "basename": "resumed-public-settings.png",
+        "sha256": "ee17dd29244d1c92cff836856e05b3b9ee2e2e72cfcc7da85f8870d917923365"
+      }
+    ]
+  },
+  "limits": [
+    "overall realVaultReady 仍 false",
+    "无seed/私钥/token/密码/邮件证明/短码进入证据",
+    "不把合法已验Pull显示accepted值视为乐观更新；原ID明确续办入口必须保留",
+    "两原ID场景仅合成业务回归通过；本轮实际仅单笔",
+    "本轮AAR来自公开b094，不声称最新Go PIN/DAG全树原生通过"
+  ]
+}

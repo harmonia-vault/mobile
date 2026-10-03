@@ -429,9 +429,20 @@ class VaultSession {
     this.stage, {
     this.accountId = '',
     this.accountGeneration = '',
-  });
+  }) : businessPending = const [];
+
+  /// 同次已验证恢复的公开续办元数据；不包含签包、token或业务值。
+  VaultSession.withBusinessPending(
+    VaultSession verifiedSession,
+    Iterable<PendingVaultOperation> pending,
+  ) : stage = verifiedSession.stage,
+      accountId = verifiedSession.accountId,
+      accountGeneration = verifiedSession.accountGeneration,
+      businessPending = List.unmodifiable(pending);
+
   final SessionStage stage;
   final String accountId, accountGeneration;
+  final List<PendingVaultOperation> businessPending;
 }
 
 @immutable
@@ -792,8 +803,14 @@ class VaultController extends ChangeNotifier {
       _promptQueue.clear();
       _activePrompt = null;
     }
+    // 先清旧账号范围，随后只采用本次可信恢复附带的不可变列表。
+    _businessPending = const [];
     _session = session;
-    _vaultSuspended = false;
+    if (session.stage == SessionStage.trusted) {
+      _businessPending = List.unmodifiable(session.businessPending);
+    }
+    _vaultSuspended = _hasBusinessContinuation;
+    if (_vaultSuspended) _phase = ConnectionPhase.blocked;
     _snapshot = VaultSnapshot(
       checkpoint: 0,
       environments: const [],
@@ -1056,7 +1073,24 @@ class VaultController extends ChangeNotifier {
     }
   }
 
+  bool get _hasBusinessContinuation =>
+      _session.stage == SessionStage.trusted &&
+      _businessPending.any((item) => item.canRetry);
+
+  // 自动恢复后的读取不能隐藏原ID入口；通用_pull仍保留全部原门槛。
+  Future<void> _pullRestoredSession(int epoch) async {
+    if (_hasBusinessContinuation) {
+      _suspendVault();
+      return;
+    }
+    await _pull(epoch);
+  }
+
   Future<void> reload() => _run((epoch) async {
+    if (_hasBusinessContinuation) {
+      _suspendVault();
+      return;
+    }
     _phase = ConnectionPhase.syncing;
     try {
       await _pull(epoch);
@@ -1073,7 +1107,7 @@ class VaultController extends ChangeNotifier {
     if (epoch != _epoch) return;
     _applySession(session);
     if (_session.stage == SessionStage.trusted || previewMode) {
-      await _pull(epoch);
+      await _pullRestoredSession(epoch);
     }
   });
   Future<void> signIn(String email, String password) => _run((epoch) async {
@@ -1179,7 +1213,7 @@ class VaultController extends ChangeNotifier {
         _initializationCode = null;
         _initializationState = 'complete';
         _applySession(session);
-        await _pull(epoch);
+        await _pullRestoredSession(epoch);
       });
 
   Future<void> queryInitialization() => _run((epoch) async {
@@ -1224,7 +1258,7 @@ class VaultController extends ChangeNotifier {
       final session = await (gateway as SessionVaultGateway).restoreSession();
       if (epoch != _epoch) return;
       _applySession(session);
-      await _pull(epoch);
+      await _pullRestoredSession(epoch);
     }
   });
 
@@ -1252,7 +1286,7 @@ class VaultController extends ChangeNotifier {
     final session = await (gateway as SessionVaultGateway).restoreSession();
     if (epoch != _epoch) return;
     _applySession(session);
-    await _pull(epoch);
+    await _pullRestoredSession(epoch);
   });
 
   String _environmentName(String name) {
@@ -1390,7 +1424,7 @@ class VaultController extends ChangeNotifier {
       final session = await (gateway as SessionVaultGateway).restoreSession();
       if (epoch != _epoch) return;
       _applySession(session);
-      await _pull(epoch);
+      await _pullRestoredSession(epoch);
     }
   });
   Future<void> retryApproval() => _run((epoch) async {
@@ -1411,7 +1445,7 @@ class VaultController extends ChangeNotifier {
     final session = await (gateway as SessionVaultGateway).restoreSession();
     if (epoch != _epoch) return;
     _applySession(session);
-    await _pull(epoch);
+    await _pullRestoredSession(epoch);
   });
   Future<void> cancelApproval() => _run((epoch) async {
     if (!supports('cancelApproval') ||
@@ -1428,7 +1462,7 @@ class VaultController extends ChangeNotifier {
     final session = await (gateway as SessionVaultGateway).restoreSession();
     if (epoch != _epoch) return;
     _applySession(session);
-    await _pull(epoch);
+    await _pullRestoredSession(epoch);
   });
 
   Future<void> revokeDevice(String id) => _run((epoch) async {

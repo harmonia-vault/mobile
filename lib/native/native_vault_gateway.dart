@@ -789,7 +789,7 @@ class NativeVaultGateway
     _checkpoint = projection.view.checkpoint;
     // 恢复投影没有来源证书版本，绝不据公钥/root猜测或自动fallback。
     if (!sameExplicitScope) _approvalVersion = 0;
-    return projection.session;
+    return VaultSession.withBusinessPending(projection.session, pending);
   }
 
   @override
