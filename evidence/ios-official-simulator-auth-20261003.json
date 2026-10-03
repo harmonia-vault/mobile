@@ -1,0 +1,58 @@
+{
+  "appPinReady": false,
+  "authenticationState": "ready",
+  "initialCapabilities": {
+    "appPinReady": false,
+    "goCore": true,
+    "protectedDeviceExists": false,
+    "realVaultReady": false,
+    "softwareDeviceKeys": true,
+    "systemAuthenticationState": "ready",
+    "systemStrongAuthentication": true,
+    "version": 1
+  },
+  "ownCleanupVerified": true,
+  "phase": "COMPLETE",
+  "profile": "harmonia/ios-official-simulator-auth/v1",
+  "realVaultReady": false,
+  "results": [
+    {
+      "name": "production-create-and-ACL-readback",
+      "status": "PASS",
+      "trusted": false
+    },
+    {
+      "name": "production-fresh-context-ACL-key-read-and-Go-import",
+      "status": "PASS",
+      "trusted": false
+    },
+    {
+      "name": "physical-device-passcode-biometric-hardware",
+      "reason": "Simulator-cannot-prove-physical-factor-or-hardware",
+      "status": "UNRUN"
+    }
+  ],
+  "runId": "3ce566c1-57c5-4ef4-a233-26954c2c1a76",
+  "scope": "official-Simulator-SDK-only-not-physical-device",
+  "synthetic": true,
+  "updatedUTC": "2026-10-03T10:06:10Z",
+  "sourceCommit": "9e0a00b81ebe08b203d79ee246b434412c5a67fb",
+  "testEnvironment": {
+    "xcode": "27.0 (27A266a)",
+    "iOSSimulator": "27.0",
+    "architecture": "arm64",
+    "officialControl": "Device Hub > Device > Face ID > Enrolled; Authorized with Face ID"
+  },
+  "interpretation": "两个PASS仅证明真实SDK代码路径。一次官方模拟匹配后，新context取钥直接完成；不证明第二次独立物理认证或真实手机硬件。",
+  "executedHarnessSourceSHA256": "4095a2076e6e1f5f78394eac5c51906843181c39177523819472241d6ea16965",
+  "publishedHarnessSourceSHA256": "6252fd5b21f23356ed0f298b1be35b702325228bb37f5b6ad8160b1422ac2567",
+  "harnessRevisionNote": "此运行使用原harness，源码与产物哈希独立保留；拟公开harness只修正已执行操作失败的分类为FAIL，未把旧运行归属到新源码。",
+  "executedBinarySHA256": "ece0d5752fbf9bc6a5a97dbce481b00e2a6dbfa3d06d96bb71135825a5c1ed68",
+  "publishedHarnessBuildValidation": {
+    "result": "PASS-compile-only",
+    "binarySHA256": "49ccc32873df17e5d1715aa5828eb2b32df397a8e21d0ee4212bbff35d641dcd",
+    "logSHA256": "dcb748bcbe6f999d6c450ddbb615fc62b86d1aac9742a899c56ff79944535b35",
+    "actualSDKRunUnchanged": true,
+    "runtimeValidation": "UNRUN-for-v2-binary"
+  }
+}
