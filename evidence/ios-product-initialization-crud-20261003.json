@@ -1,0 +1,317 @@
+{
+  "version": 1,
+  "scope": "actual Flutter product on iOS Simulator; synthetic account and own HTTPS fixture; not physical iPhone acceptance",
+  "dateUTC": "2026-10-03",
+  "baseMobile": "8a0515c374dea6bd29e966e442c804b2222db7a7",
+  "coreGo": "b094a933bf1922347b4a41ea8baaa5699ffbf5c1",
+  "server": "bd86fec6215b6f7149234578e7bf5dc764a639c2",
+  "boringSSL": "fab96f87245d7c6b941515201843665122650b88",
+  "build": {
+    "configuration": "Debug Simulator",
+    "result": "PASS",
+    "trackedSourceChangesFromArchive": [],
+    "sameTestBundlePreservedDuringUpgrade": true,
+    "fixtureBundleIdentifier": "org.harmoniavault.ios.productfixture",
+    "archiveSHA256": "4c0ee874e831ad548c78d78a4e18a7c17f8f93c76eb5f0271fd5560031684372",
+    "runnerSHA256": "691f30d606f27fa92238086b191ad761477d2e04ca09b57a5eb618edf187b9a7",
+    "flutterKernelSHA256": "7dfb132759d365f8c931996b7fb54ae4f8ed171ae9115a4307a89201da5ddede",
+    "appFilesManifestSHA256": "26f6926e43061086af5666ffb6884c95eea4e0b2d20961b68979b95f57c9c346",
+    "buildLogSHA256": "f0b012d94ecb7ccccbeaa1e13739d9bcdd187346a17deba41e65961b6c724e18",
+    "releaseRebuiltThisRun": false,
+    "securityHarnessRerunThisRun": false
+  },
+  "platform": {
+    "xcode": "27.0 (27A266a)",
+    "simulatorRuntime": "iOS 27.0 (24A434)",
+    "simulatedDevice": "iPhone 17 Pro",
+    "flutter": "3.47.6",
+    "endpoint": "https://127.0.0.1:5593",
+    "standardTLSHostnameAndChainValidation": true,
+    "systemRootsUnchanged": true
+  },
+  "results": [
+    {
+      "case": "login-existing-account",
+      "status": "PASS",
+      "evidence": "Normal product login reached untrusted waiting state; first-stage login counter 2 includes explicit login and initialization re-login."
+    },
+    {
+      "case": "first-initialization-complete",
+      "status": "FAIL",
+      "category": "REJECTED",
+      "evidence": "Actual complete submission failed after full 52-character reentry; server initializationAccepted remained 0."
+    },
+    {
+      "case": "first-original-id-query",
+      "status": "FAIL",
+      "category": "REJECTED",
+      "evidence": "Existing query button invoked once; no new intent created at that step. Query HTTP count/status are not collected by this fixture."
+    },
+    {
+      "case": "explicit-logout-and-new-first-device-flow",
+      "status": "PASS",
+      "evidence": "Normal product logout cleared own local state; same account login created a fresh protected device via official Simulator authentication. New explicit initialization used new code and completed."
+    },
+    {
+      "case": "new-full-code-reentry-and-initialization",
+      "status": "PASS",
+      "inputElapsedSeconds": 6.464,
+      "evidence": "Official AX read only the displayed synthetic code into helper RAM, immediately hid it, physically typed all 52 characters and submitted. Real server accepted once; Boot/Pull populated initial environment."
+    },
+    {
+      "case": "variable-create-and-read",
+      "status": "PASS",
+      "publicSyntheticName": "IOS_SYNTHETIC_CHECK",
+      "publicSyntheticValue": "public-value-one",
+      "evidence": "Product saved, returned to detail and revealed the exact same-pull value; mutationAccepted 1."
+    },
+    {
+      "case": "variable-update-and-read",
+      "status": "PASS",
+      "publicSyntheticValue": "public-value-two",
+      "evidence": "Selected existing variable, changed value and saved; product read back exact value; mutationAccepted 2."
+    },
+    {
+      "case": "variable-delete",
+      "status": "PASS",
+      "evidence": "Explicit normal delete confirmation; product showed 0 variables; mutationAccepted 3."
+    },
+    {
+      "case": "final-logout-and-restore-denial",
+      "status": "PASS",
+      "category": "PROTECTED_KEYS_UNAVAILABLE",
+      "evidence": "Normal product logout returned to login; existing local restore entry reported device keys unavailable; all cloud counters unchanged."
+    },
+    {
+      "case": "own-fixture-and-ram-helper-cleanup",
+      "status": "PASS",
+      "evidence": "Both processes exited 0; fixture stopped via SIGINT; loopback 5593 connection refused (errno 61); keyboard capture off, Simulator retained."
+    }
+  ],
+  "failureAnalysis": {
+    "rawGoError": "NOT_CAPTURED",
+    "likelyCause": "Inference: first pending challenge exceeded the unchanged 120-second server TTL while diagnosing AX duplicate references. Actual UI category was REJECTED, not a captured raw expiry error.",
+    "queryHTTPCount": "NOT_COLLECTED",
+    "sourceFinding": "b094 mobileworkflow/vaultworkflow.go QueryInitialization:641 sends original GET before validateInitialization:651. Validation:614 rejects expired pending; completed receipts may be past challenge expiry. This is not evidence that an accepted unknown result cannot be queried.",
+    "serverFinding": "bd86 src/enrollment.ts initializationStatus returns the original pending record without an expired state; completeInitialization rejects expired incomplete challenges.",
+    "productGap": "No explicit expired-pending state or restart entry on the pending page; normal explicit logout/new login is the existing supported restart path.",
+    "earlierAXHelperFailures": {
+      "count": 2,
+      "stage": "before code reveal",
+      "cause": "Duplicate references to same AX element",
+      "fix": "CFEqual deduplication; no fake authentication"
+    },
+    "transientObservation": "After official authentication during re-login the product briefly showed 先恢复应用入口，再执行此操作; normal first-device navigation then succeeded. No fix or broad lifecycle pass claimed.",
+    "timeNote": "Simulator screenshots show local clock ~19:35–20:05; file timestamps are ~11:35–12:05 UTC. Original private failure JSON time annotation was corrected in a separate v2 freeze; original retained."
+  },
+  "counterStages": [
+    {
+      "stage": "first-attempt-rejected",
+      "counters": {
+        "initializationAccepted": 0,
+        "environmentAttempts": 0,
+        "environmentAccepted": 0,
+        "mutationAttempts": 0,
+        "mutationAccepted": 0,
+        "bootAccepted": 0,
+        "pullAccepted": 0
+      },
+      "counterFileSHA256": "7ea165bff709ade5f80fcdc6e36f1056b8a9b38d7d3fe298fcca04a29e2c67e3"
+    },
+    {
+      "stage": "new-explicit-initialization-complete",
+      "counters": {
+        "initializationAccepted": 1,
+        "environmentAttempts": 1,
+        "environmentAccepted": 1,
+        "mutationAttempts": 0,
+        "mutationAccepted": 0,
+        "bootAccepted": 2,
+        "pullAccepted": 5
+      },
+      "counterFileSHA256": "c2ba6635aebd0abfa6aa0328a63f628c9b6a89e795458b42a6e8306fcb215a04"
+    },
+    {
+      "stage": "variable-create-and-read",
+      "counters": {
+        "initializationAccepted": 1,
+        "environmentAttempts": 1,
+        "environmentAccepted": 1,
+        "mutationAttempts": 1,
+        "mutationAccepted": 1,
+        "bootAccepted": 4,
+        "pullAccepted": 10
+      },
+      "counterFileSHA256": "30257843aa91306ac7cb0b0e8988624abd6cb5134dc34fafe246645269bd4ebf"
+    },
+    {
+      "stage": "variable-update-and-read",
+      "counters": {
+        "initializationAccepted": 1,
+        "environmentAttempts": 1,
+        "environmentAccepted": 1,
+        "mutationAttempts": 2,
+        "mutationAccepted": 2,
+        "bootAccepted": 6,
+        "pullAccepted": 15
+      },
+      "counterFileSHA256": "450f594979820610098622a947fe8c44ad7fe74b0f9e9214eee5d7f21755abb9"
+    },
+    {
+      "stage": "variable-delete",
+      "counters": {
+        "initializationAccepted": 1,
+        "environmentAttempts": 1,
+        "environmentAccepted": 1,
+        "mutationAttempts": 3,
+        "mutationAccepted": 3,
+        "bootAccepted": 8,
+        "pullAccepted": 20
+      },
+      "counterFileSHA256": "768af77d2fc73f39e7eaff0aaacaf95b7e86b0ddb97be03cb634d42a8569ab50"
+    },
+    {
+      "stage": "logout-and-restore-rejected",
+      "counters": {
+        "initializationAccepted": 1,
+        "environmentAttempts": 1,
+        "environmentAccepted": 1,
+        "mutationAttempts": 3,
+        "mutationAccepted": 3,
+        "bootAccepted": 8,
+        "pullAccepted": 20
+      },
+      "counterFileSHA256": "768af77d2fc73f39e7eaff0aaacaf95b7e86b0ddb97be03cb634d42a8569ab50"
+    }
+  ],
+  "finalCounters": {
+    "approvalV3Accepted": 0,
+    "approvalV3Attempts": 0,
+    "bootAccepted": 8,
+    "emailProofAccepted": 1,
+    "emailProofAttempts": 1,
+    "environmentAccepted": 1,
+    "environmentAttempts": 1,
+    "initializationAccepted": 1,
+    "instanceInfo": 2,
+    "loginAccepted": 4,
+    "loginAttempts": 4,
+    "mutationAccepted": 3,
+    "mutationAttempts": 3,
+    "pullAccepted": 20,
+    "registerAccepted": 1,
+    "registerAttempts": 1
+  },
+  "authenticationScope": {
+    "explicitOfficialFaceIDMatchesDuringThis8aRun": 1,
+    "realAPIs": "LocalAuthentication and ACL-protected Keychain operations in unchanged production Swift; DeviceHub official Face ID control for simulated factor",
+    "laterACLCalls": "No extra visible prompt observed; do not count as independent physical authentication",
+    "physicalHardwareProof": false,
+    "appPinReady": false,
+    "realVaultReadyDefault": false
+  },
+  "notRun": [
+    "physical iPhone/biometric hardware assurance",
+    "PIN product workflow",
+    "CLI pairing or cross-device approval in this run",
+    "recovery rotation or recovered-device enrollment",
+    "environment CRUD beyond initialization label creation",
+    "relaunch/offline/revocation durability in this run"
+  ],
+  "screenshots": [
+    {
+      "name": "complete-rejected.png",
+      "sha256": "30fcc23d2a9ddfaaf5bd14905b96ea1ed57b907fad1922575fd24f9f211f1fdf",
+      "bytes": 572072,
+      "capturedUTC": "2026-10-03T11:39:26.630119+00:00"
+    },
+    {
+      "name": "login-untrusted.png",
+      "sha256": "24a462121e1e5d97dad8461df9b36c4cd38475387b2f444645d161f15b91a07d",
+      "bytes": 554513,
+      "capturedUTC": "2026-10-03T11:34:15.589709+00:00"
+    },
+    {
+      "name": "original-query-rejected.png",
+      "sha256": "24d710922889e9c180be0e687a778d17172c73a20f18b06de9c5311235703486",
+      "bytes": 571808,
+      "capturedUTC": "2026-10-03T11:40:11.287732+00:00"
+    },
+    {
+      "name": "pending-code-masked.png",
+      "sha256": "9677bf565e380a694dbaaf0bc2b0a5f8f6e303849d402fefd328e6f35123f202",
+      "bytes": 550326,
+      "capturedUTC": "2026-10-03T11:35:23.263939+00:00"
+    },
+    {
+      "name": "harmonia-ios-8a-attempt2-after-submit.png",
+      "sha256": "050f94b9bef61ff07b80439264101c19d0169cbc90452ef00fe8f4ebca2c13d2",
+      "bytes": 926598,
+      "capturedUTC": "2026-10-03T11:55:46.918749+00:00"
+    },
+    {
+      "name": "harmonia-ios-8a-explicit-logout.png",
+      "sha256": "54645269ae18ccdb270eca3e77bd609f3db0e15a967a4b1bf58f9c487950c898",
+      "bytes": 957438,
+      "capturedUTC": "2026-10-03T11:49:31.141260+00:00"
+    },
+    {
+      "name": "harmonia-ios-8a-final-logout.png",
+      "sha256": "9cc944603717e3cfe15f49c99723b76552201463cf94e1d7725f2aff1cabd2a9",
+      "bytes": 934318,
+      "capturedUTC": "2026-10-03T12:03:44.301576+00:00"
+    },
+    {
+      "name": "harmonia-ios-8a-post-logout-restore-result.png",
+      "sha256": "7001e8cc058cf5f48071a0716aab63a05149abf6108ebe90091a87b2e86d0570",
+      "bytes": 948939,
+      "capturedUTC": "2026-10-03T12:05:22.906607+00:00"
+    },
+    {
+      "name": "harmonia-ios-8a-relogin.png",
+      "sha256": "4ef52e978d976e79c6b22dec363139aaee63ee6a194cbb40e081b989425c8c49",
+      "bytes": 1020548,
+      "capturedUTC": "2026-10-03T11:53:14.698058+00:00"
+    },
+    {
+      "name": "harmonia-ios-8a-variable-create.png",
+      "sha256": "830ae4c6faf693b5ae86d6d95e7ce2d57cf0e18125d65d45b16c13388c8359f6",
+      "bytes": 944777,
+      "capturedUTC": "2026-10-03T11:57:56.268314+00:00"
+    },
+    {
+      "name": "harmonia-ios-8a-variable-delete-confirm.png",
+      "sha256": "50b6401c98017d24d06c8fd292f38d9bd57005e154a7c92f940f90067bbf1c02",
+      "bytes": 985277,
+      "capturedUTC": "2026-10-03T12:01:40.384934+00:00"
+    },
+    {
+      "name": "harmonia-ios-8a-variable-deleted.png",
+      "sha256": "00cc2c69345f925cb74cde09a85e787cae2bcde939a43b75fd61b9808781df12",
+      "bytes": 946201,
+      "capturedUTC": "2026-10-03T12:02:30.217349+00:00"
+    },
+    {
+      "name": "harmonia-ios-8a-variable-read-one.png",
+      "sha256": "dc7302d119540fe86b162b06c2762889a6abf624b86e5c43f5d98bc056e0da76",
+      "bytes": 950011,
+      "capturedUTC": "2026-10-03T11:58:23.299908+00:00"
+    },
+    {
+      "name": "harmonia-ios-8a-variable-read-two.png",
+      "sha256": "f92ce8386b8e84064748c61c6984b94f8c38912575efec54bcb316ddd96405c7",
+      "bytes": 950571,
+      "capturedUTC": "2026-10-03T12:00:30.807105+00:00"
+    }
+  ],
+  "automationEvidence": {
+    "recoveryReentrySourceSHA256": "cbdd7db68a692c3eaeb754def14432c5a6c27f01fd108f1320e8f9f40d331d80",
+    "recoveryReentryBinarySHA256": "eeb4c19677ad1e001692b3f727fc48b0b6bdac1951240c74b1ee940ccbf1a1e2",
+    "continuousInputSourceSHA256": "ee7b4090dde939955ed8e59d0252f62a5449078e404b0d67cb4b680e859f9170",
+    "rawInputRecordSHA256": "501bf9254bbce91ac94a52a2833435cdb7495daafb8e2e1d0963bd3c82ddaa71",
+    "inputElapsedSeconds": 6.464,
+    "rawRecordTimestampNote": "The raw helper field named startedUTC was recorded at helper completion; only elapsed monotonic duration is used for the timing claim.",
+    "secrets": "No password, full recovery code, token, private TLS key or protected packet included; RAM helpers exited."
+  },
+  "publication": "Only this redacted JSON and companion Markdown are candidates; screenshots, binaries, CA/resources, local paths and helper artifacts remain private."
+}
