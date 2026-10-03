@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "timestamp": "2026-10-03T11:17:17.146162+00:00",
+  "executedBaseMobile": "9e0a00b81ebe08b203d79ee246b434412c5a67fb",
+  "fixtureSourcePublished": "875ff1751461abedb3898785b839791b934254ee",
+  "debugBinarySHA256": "44b3223d1b21cf257575e5d5b21b1778a91654fbf38aae51286648fc3b3c5d61",
+  "scope": "实际 Flutter 创建账号与邮件证明；不含初始化/登录/可信授权",
+  "counters": {
+    "approvalV3Accepted": 0,
+    "approvalV3Attempts": 0,
+    "bootAccepted": 0,
+    "emailProofAccepted": 1,
+    "emailProofAttempts": 1,
+    "environmentAccepted": 0,
+    "environmentAttempts": 0,
+    "initializationAccepted": 0,
+    "instanceInfo": 1,
+    "loginAccepted": 0,
+    "loginAttempts": 0,
+    "mutationAccepted": 0,
+    "mutationAttempts": 0,
+    "pullAccepted": 0,
+    "registerAccepted": 1,
+    "registerAttempts": 1
+  },
+  "officialSimulatorFaceIDActions": 1,
+  "laterIndependentPromptObserved": false,
+  "deviceTrustGranted": false,
+  "screenshots": {
+    "harmonia-ios-input-sanity.png": "5a305050e8cd24c93985beb3c1237203e7671390f2b9a53eafead4aa6c74f044",
+    "harmonia-ios-register-auth.png": "343487194846a058e73523e44d352e16af5d12b6de1af1541120acfdae62ba4a",
+    "harmonia-ios-register-after-auth.png": "f0546d6769fba9062aa09784b153c3a038c86d94a000b9a20bef6e61480f2e17",
+    "harmonia-ios-email-proof-submit.png": "1c077631520c02f3e337aef92a767600057ee8b1e6abae7ced61e3cba2f3ae23"
+  },
+  "unrun": [
+    "首台设备初始化",
+    "账号登录",
+    "可信会话",
+    "管理操作",
+    "手机硬件因素"
+  ],
+  "inputHelperSHA256": "840096cd0c2c678748d6dd73a5f8528ca68bdafb5f65e638b1903527b566cf65",
+  "asciiHelperSourceSHA256": "a01cc18fe9f432e1cde114323f94f964561c9af6d8c322a98c7ca66a9aa95fe8",
+  "publicInputSanity": "aA0_1:2 exact match",
+  "testSecretStorage": "仅合成输入进程 RAM、产品遮蔽字段与本次协议调用；没有 argv/日志/截图秘密",
+  "serverBase": "bd86fec6215b6f7149234578e7bf5dc764a639c2",
+  "countsFileSHA256": "79427a16217c1bb768654677cb5c818f92f1415fd607acf49ffb544a6db6b602"
+}
