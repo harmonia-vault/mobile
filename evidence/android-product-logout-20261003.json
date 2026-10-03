@@ -1,0 +1,123 @@
+{
+  "version": 1,
+  "recordedDateUTC": "2026-10-03",
+  "scope": "独立最小正式退出回归；不重复CRUD或CLI批准",
+  "overall": "PASS",
+  "seconds": 53.267,
+  "actualSystemCredentialWindows": 9,
+  "source": {
+    "mobilePublicBase": "ac1e872ce138ee8000837a24141ad8900200c8c7",
+    "finiteProductionOverlayEquivalentPublicCommit": "8a0515c374dea6bd29e966e442c804b2222db7a7",
+    "productionSourceManifestSHA256": "18a603cdb47b89cfbb80359bdf9aacb8c96a7f1cd592a8d65804d2705f19f93b",
+    "productionOverlays": {
+      "lib/ui/harmonia_app.dart": "a5e22f7ef45af793019497e75bc1459f9f1d0e9fe3cd7d7a7f3eed1a5c0195f0",
+      "lib/vault_controller.dart": "40daa50302109001b299aa5246a6e3d855d4e143491750a6272cff8dec74cd07",
+      "test/sensitive_form_lifecycle_test.dart": "18c5d6783e3069c96b7d664b9953a8ce8c3fd3c526a7970e3435ee2134b1b8b5"
+    },
+    "goAARPublicBase": "b094a933bf1922347b4a41ea8baaa5699ffbf5c1",
+    "serverPublicBase": "bd86fec6215b6f7149234578e7bf5dc764a639c2",
+    "finiteFixtureHelperSHA256": "2aa7463c28e3470766922683b595a8c8d3ed9b0343da43676f6ba39c096dafe3",
+    "testCandidateManifestSHA256": "2a1cf0247e5fdcd9eb70e8618c1c54c69b97088d19998917b868eee418f3716e",
+    "testSourceSHA256": {
+      "minimal-logout.py": "ea8ad8bfdeb8b130acb81a8c0a2a1c005c9a72d9bc533e92669451251bd3c10a",
+      "runtime-test-sources/ProductQaCommand.kt": "10588a1177af6bcd817e8f10ad9f325a2d7de68b4cfc5fa1242eb6f5de7720e2",
+      "runtime-test-sources/NativeProductUiDriverTest.kt": "77ea3fb16d9c5a5542407b15488aebc6e3bfdbc677aefc82f84b5151bcfa4972",
+      "runtime-test-sources/ProductSystemCredentialFixture.kt": "830c2dbd710a9842423eb0ec14fb276cdbc2dd588cafce51b9ad792ae9d366ed"
+    }
+  },
+  "artifacts": {
+    "appAPK": {
+      "basename": "harmonia-form-productfixture-debug.apk",
+      "sha256": "cde512caff3404ad9065dd674227c106b8de0a72c17a241dac04b87feea4cc5a"
+    },
+    "testAPK": {
+      "basename": "harmonia-form-productqa-test.apk",
+      "sha256": "bf088f2010d21ed6676526ebf376a4336da87e4ad30314b41f14554aeb5dc758"
+    },
+    "AARsha256": "fb9664f6ccc13707367a12e64f28663fc17018ff4d8bb044ea37d913be2e1d0b",
+    "publicCAConfigSHA256": "6557096a1eb5ba24d961e0d90e1f1bc959ec0566fd04bec12d6c611e89a45b68",
+    "port": 4463
+  },
+  "build": {
+    "standardTLSChainAndHostnameSmoke": "PASS",
+    "appBuildSeconds": 3.156,
+    "testBuildSeconds": 1.139,
+    "productionSourcesRestoredExactly": true,
+    "goRebuild": "UNRUN"
+  },
+  "stages": {
+    "actualFlutterRegisterAndEmailProof": "PASS",
+    "actualFlutterFirstInitializationCompleteCodeReentryAndBootPull": "PASS",
+    "observedSDKForegroundIdleBeforeLogout": "PASS",
+    "materialPresenceBeforeLogout": "PASS",
+    "actualCSettingsFormalLogout": "PASS",
+    "loginPageAfterLogout": "PASS",
+    "deviceMaterialWorkflowAndAliasAbsent": "PASS",
+    "localOpenRejectedWhenMaterialAbsent": "PASS",
+    "normalActivityRestartConnectionPage": "PASS",
+    "materialStillAbsentAfterRestart": "PASS",
+    "CRUD": "UNRUN",
+    "CLI": "UNRUN"
+  },
+  "beforeCounters": {
+    "approvalV3Accepted": 0,
+    "approvalV3Attempts": 0,
+    "bootAccepted": 0,
+    "emailProofAccepted": 0,
+    "emailProofAttempts": 0,
+    "environmentAccepted": 0,
+    "environmentAttempts": 0,
+    "initializationAccepted": 0,
+    "instanceInfo": 0,
+    "loginAccepted": 0,
+    "loginAttempts": 0,
+    "mutationAccepted": 0,
+    "mutationAttempts": 0,
+    "pullAccepted": 0,
+    "registerAccepted": 0,
+    "registerAttempts": 0
+  },
+  "finalCounters": {
+    "approvalV3Accepted": 0,
+    "approvalV3Attempts": 0,
+    "bootAccepted": 2,
+    "emailProofAccepted": 1,
+    "emailProofAttempts": 1,
+    "environmentAccepted": 1,
+    "environmentAttempts": 1,
+    "initializationAccepted": 1,
+    "instanceInfo": 1,
+    "loginAccepted": 1,
+    "loginAttempts": 1,
+    "mutationAccepted": 0,
+    "mutationAttempts": 0,
+    "pullAccepted": 5,
+    "registerAccepted": 1,
+    "registerAttempts": 1
+  },
+  "cleanup": {
+    "officialSyntheticCredentialClearExitCode": 0,
+    "independentSDKNoSecureVerified": true,
+    "ownForwardRemoved": true,
+    "ownTwoPackagesAbsent": true,
+    "ownFixturePortClosed": true,
+    "originalPreviewPreserved": true,
+    "originalPreviewSHA256": "4d3efb2d745734664a28f1725855eb73da8b963f5bfea2884668de0a88611c66",
+    "sameIsolatedAVDPreserved": true,
+    "liveNormalAAR7afPreserved": true
+  },
+  "privateEvidenceHashes": {
+    "product-userflow-result.json": "196c8c639f6ad4bb93ad68fb6fefde198943a977e04d09a4725096a672c5a585",
+    "fixed-driver-diagnostic.json": "f943a5c5bc0cbfe16db2a238b2f266b4c835b7cbc663b284d6a4b952287cf2d4",
+    "actual-run-metadata.json": "f5841c68de365d62f720339a371d2b3e01ede3e2fcb32834cb2d0ecb5d0abf70",
+    "OWNED-CLEANUP.json": "e909501f021ce6f22b4abb6622fce9b5069b95db7cd419ee72816361f2022afa",
+    "runtime-build/artifacts.json": "e0cea09796b170dec1089ebff6185939916a742700c42d9675c5d7bd27579265"
+  },
+  "limits": [
+    "SDK前台且无ProgressBar连续750ms只用于测试排序，不是认证或可信证明。",
+    "材料缺失时prepareOpen抛异常仅称本地恢复被拒绝，不归因为特定异常类别。",
+    "本次不证明此前4461最终退出失败的原因，未修改生产认证或权限门槛。",
+    "此前4461完整流程149.966秒/34次认证的whole FAIL保持；其已通过CRUD和CLI阶段不在本轮重复。",
+    "仅独立debug productfixture与合成凭据，整体realVaultReady仍false。"
+  ]
+}
