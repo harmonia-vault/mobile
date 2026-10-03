@@ -27,12 +27,16 @@ class NativeBridgePlugin internal constructor(
     private val store: ProtectedDeviceStore = ProtectedDeviceStore(activity),
     private val workflowFilename: String = "workflow-state-v1.gcm",
     private val additionalCA: ByteArray = ByteArray(0),
+    // 仅内部原生构造器的合成故障注入；默认空，通道不能设置，接收的仍只有AES密文。
+    private val beforeWorkflowPacketSave: (ByteArray) -> Unit = {},
     private val beforeWorkflowSave: () -> Unit = {},
 ) : MethodChannel.MethodCallHandler {
     private val channel = MethodChannel(messenger, "org.harmoniavault/native/v1")
     private val worker = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private val busy = AtomicBoolean(false)
+    // 仅本插件进程持有；Go内部随机instance/handle/EdOwner不跨MethodChannel或磁盘。
+    private val recoveryRegistry = Mobilebridge.newRecoveryRegistry(activity.packageName, workflowFilename)
     private var cancellation: CancellationSignal? = null
     @Volatile private var disposed = false
     @Volatile private var activeWorkflow: VaultWorkflow? = null
@@ -113,6 +117,7 @@ class NativeBridgePlugin internal constructor(
     private fun authenticated(result: MethodChannel.Result, create: Boolean, command: String?, workflow: Boolean = false, shortCode: ByteArray? = null, enrollment: Boolean = false) {
         if (!store.supported() || Build.VERSION.SDK_INT < 30) {
             clearApproval(shortCode)
+            recoveryRegistry.clear()
             result.error("AUTH_UNAVAILABLE", "需要系统设备密码或强生物认证，当前不能生成或解包设备钥匙。", null)
             return
         }
@@ -121,9 +126,9 @@ class NativeBridgePlugin internal constructor(
         val cipher: Cipher
         val ciphertext: ByteArray?
         try {
-            if (create) { cipher = store.prepareCreate(); ciphertext = null }
+            if (create) { recoveryRegistry.clear(); cipher = store.prepareCreate(); ciphertext = null }
             else { val opening = store.prepareOpen(); cipher = opening.cipher; ciphertext = opening.ciphertext }
-        } catch (_: Exception) { clearApproval(shortCode); finish(result, code = "PROTECTED_KEYS_UNAVAILABLE"); return }
+        } catch (_: Exception) { recoveryRegistry.clear(); clearApproval(shortCode); finish(result, code = "PROTECTED_KEYS_UNAVAILABLE"); return }
         val consumed = AtomicBoolean(false)
         val signal = CancellationSignal()
         cancellation = signal
@@ -136,14 +141,14 @@ class NativeBridgePlugin internal constructor(
             prompt.authenticate(BiometricPrompt.CryptoObject(cipher), signal, activity.mainExecutor,
                 object : BiometricPrompt.AuthenticationCallback() {
                     override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                        if (consumed.compareAndSet(false, true)) { clearApproval(shortCode); finish(result, code = "AUTH_CANCELLED") }
+                        if (consumed.compareAndSet(false, true)) { recoveryRegistry.clear(); clearApproval(shortCode); finish(result, code = "AUTH_CANCELLED") }
                     }
                     override fun onAuthenticationFailed() {
-                        if (consumed.compareAndSet(false, true)) { clearApproval(shortCode); signal.cancel(); finish(result, code = "AUTH_FAILED") }
+                        if (consumed.compareAndSet(false, true)) { recoveryRegistry.clear(); clearApproval(shortCode); signal.cancel(); finish(result, code = "AUTH_FAILED") }
                     }
                     override fun onAuthenticationSucceeded(authentication: BiometricPrompt.AuthenticationResult) {
                         if (!consumed.compareAndSet(false, true)) return
-                        if (authentication.cryptoObject?.cipher !== cipher || disposed) { clearApproval(shortCode); finish(result, code = "AUTH_FAILED"); return }
+                        if (authentication.cryptoObject?.cipher !== cipher || disposed) { recoveryRegistry.clear(); clearApproval(shortCode); finish(result, code = "AUTH_FAILED"); return }
                         worker.execute {
                             var material: ByteArray? = null
                             var device: org.harmoniavault.go.mobilebridge.Device? = null
@@ -153,6 +158,7 @@ class NativeBridgePlugin internal constructor(
                                     device = Mobilebridge.newDevice()
                                     material = device.exportProtectedMaterial()
                                     store.saveAuthenticated(cipher, material)
+                                    recoveryRegistry.resetForNewDevice()
                                     finish(result, device.execute("{\"version\":1,\"operation\":\"publicInfo\"}"))
                                 } else {
                                     check(!disposed)
@@ -163,28 +169,35 @@ class NativeBridgePlugin internal constructor(
                                         val protected = ProtectedWorkflowStore(activity, workflowFilename, beforeWorkflowSave) { !disposed }
                                         val endpoint = JSONObject(command!!).getString("endpoint")
                                         val state = protected.load()
-                                        val flow = device.openWorkflow(endpoint, protected.namespace, state, nativeCertificates(), protected)
+                                        val writer = object : org.harmoniavault.go.mobilebridge.SealedStateStore {
+                                            override fun saveSealed(packet: ByteArray) {
+                                                beforeWorkflowPacketSave(packet)
+                                                protected.saveSealed(packet)
+                                            }
+                                        }
+                                        val flow = device.openWorkflow(endpoint, protected.namespace, state, nativeCertificates(), writer)
                                         activeWorkflow = flow
                                         try {
                                             check(!disposed)
+                                            flow.attachRecoveryRegistry(recoveryRegistry)
                                             val response = when {
                                                 shortCode != null && enrollment -> flow.executeEnrollment(command, shortCode)
                                                 shortCode != null -> flow.executeApproval(command, shortCode)
                                                 else -> flow.execute(command)
                                             }
-                                            if (flow.requiresDeviceDeletion()) { store.delete(); protected.delete() }
+                                            if (flow.requiresDeviceDeletion()) { recoveryRegistry.clear(); store.delete(); protected.delete() }
                                             check(!disposed)
                                             finish(result, response)
                                         } finally { activeWorkflow = null; flow.close(); state.fill(0) }
                                     } else finish(result, device.execute(command!!))
                                 }
-                            } catch (_: Exception) { finish(result, code = "GO_OR_KEYSTORE_REJECTED") }
+                            } catch (_: Exception) { recoveryRegistry.clear(); finish(result, code = "GO_OR_KEYSTORE_REJECTED") }
                             finally { clearApproval(shortCode); material?.fill(0); device?.close() }
                         }
                     }
                 })
         } catch (_: Exception) {
-            if (consumed.compareAndSet(false, true)) { clearApproval(shortCode); finish(result, code = "AUTH_UNAVAILABLE") }
+            if (consumed.compareAndSet(false, true)) { recoveryRegistry.clear(); clearApproval(shortCode); finish(result, code = "AUTH_UNAVAILABLE") }
         }
     }
 
@@ -207,6 +220,7 @@ class NativeBridgePlugin internal constructor(
 
     fun dispose() {
         disposed = true
+        recoveryRegistry.close()
         clearApproval(pendingShortCode)
         activeWorkflow?.cancel()
         cancellation?.cancel()

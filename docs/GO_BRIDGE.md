@@ -84,3 +84,13 @@ NativeWorkflowAdapter新增managementDevices/prepareDeviceGrant/prepareOtherDevi
 SourceManifest5dbcb8985fddc47b8815046c6b8e4f470424c689a5ef1da8f28364168d489487，AARb61ce06fd73c529b7fbeee7be8e1a48b3cfd2d0f15873dcc6653485023711fb7；构建/运行后归档sourceChanges为空，不称后续HEAD或全当前tree通过。compileSdk36与实际API34分别记录。完整commit/候选/产物哈希、复现入口mise test-native-management及边界见[核心MANAGEMENT_NATIVE.md](../../core-go/mobilebridge/MANAGEMENT_NATIVE.md)。实际本轮noBackup文件空、PIN清除/两fixture包卸载Success、forward空、Go peer和HTTPS96571退出0、4443拒连接，preview及AVD57725保留无reset/wipe。原始manifest/driver/JUnit/cleanup只在core-go/.build/native-management-snapshot；无UI改动或自行提交。
 
 手机请求公开限制：executeWorkflow/executeApproval/executeEnrollment的整段command JSON UTF8最多32768字节，含endpoint、操作id、字段名及JSON转义。Go协议value上限65536字节不等于手机可以提交64KiB；实际值余量须按完整序列化请求的UTF8字节数核算，不能按Dart字符数。变量名限ASCII `[A-Za-z_][A-Za-z0-9_]{0,127}`，`__HARMONIA_`前缀不分大小写拒绝；环境名trim后非空、最多120个Unicode码点、无NUL。Go仍是权威校验，超过原生请求上限会在认证前拒绝。
+
+## 连续恢复与显式 cert4 原生切片（2026-10-03 UTC）
+
+10个typed恢复与4个显式V4批准操作已接Go Registry/Kotlin每操作强认证/Dart业务adapter；合同见[NATIVE_RECOVERY_ABI.md](NATIVE_RECOVERY_ABI.md)。旧恢复Ed只在Go进程，handle/私钥不跨通道或落盘；normal Workflow.Close detach，认证取消/保存失败/logout/失权/回拨/expiry/dispose退役。同步密封原25域两签包即关闭旧owner，unknown只原journal；轮换仍restricted，显式登记的正式Boot/Pull/proof3和最后保存成功才trusted。没有管理者rotateRecovery、任意签名或第三个正常旧码表单。整体ready=false；产品gateway用户链另行接线。
+
+最终公开core6eec463/mobile d169d74/server02689b4/protocolde21d99/workspace14a27f9加15有限候选，同一正常AAR/正式CLI/controllers/Kotlin主test APK实际构建。Android三阶段PASS38.985/21.174/34.316秒，合计94.475秒，30次真实系统CryptoObject提示含1取消、两次真实force-stop、三个不同PID、两controller exit0。实际验证完整旧码中断resume、原25域未知结果、最后Applied seal失败accepted但trustedfalse/cache和ownerclosed、跨进程原cert4 ID恢复可信E、显式X RO1小时/Y Admin0、真实X拒写/Y写、Android E V4批准正式CLI4有限RW Y-only、PAKE/双签/Boot/已验Pull/隔离导出/RW写及运行中daemon拒X、原IDcomplete确认、Logout删除钥/state。无V2/V3审批降级。
+
+最终source-manifest SHA256 `c7630a1971f3fe153543dc02f2a75dddaa2db697d109f1b8e0b2a8f1ce06fb7f`、AAR `54b4d03dc4fccaeec9cebf0655f6e15f14bc86a49c19d512865a9ccdfee8766a`，构建/运行后archivedSourceChanges为空。该归档不含当前login/pending/PIN/UI/GoMod草稿，不声称当前HEAD整树测试通过。旧三次FAIL/UNRUN、clock修正产物的阶段3角色夹具FAIL均保留；最终仅修测试枚举ReadOnly→RO，其他14候选与clock快照相同，重新构建并完整跑三阶段，未拼接旧阶段PASS。固定来源、全部产物SHA、strict120秒真实钟窄修与未跑边界见[核心RECOVERY_NATIVE.md](../../core-go/mobilebridge/RECOVERY_NATIVE.md)。
+
+最终本轮noBackup文件空、PIN清除/两fixture包卸载Success、UIDalias删除、forward空、CLI/provider目录与进程0、HTTPS48590退出0且4443拒连接。原preview与同API34 AVD57725保留无reset/wipe，已交回UI视觉验收。compileSdk36与实际Android14/API34分别记录。完整恢复码和短码只RAM/匿名pipe/局部socket，无runner参数/shell文本/日志/磁盘。原始证据留core-go ignored `.build/native-recovery-role-snapshot`，不公开二进制。不包含DAG第二恢复、普通非恢复V4、PIN、真实手机/生物成功/真实邮件或桌面OS认证；连接/注册/登录/restore的Flutter用户链仍须独立验收。
