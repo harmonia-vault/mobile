@@ -48,6 +48,12 @@ internal class ProtectedDeviceStore(
 
     fun exists(): Boolean = atomicFile.baseFile.exists() || File(atomicFile.baseFile.path + ".bak").exists()
 
+    /** 残留alias/.new也属于既有系统mode，不能为PIN setup当作不存在。 */
+    fun hasArtifacts(): Boolean {
+        val keys = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        return exists() || File(atomicFile.baseFile.path + ".new").exists() || keys.containsAlias(alias)
+    }
+
     private fun requireSupported() {
         check(supported()) { "system strong authentication unavailable" }
     }

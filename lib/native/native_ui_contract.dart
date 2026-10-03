@@ -18,6 +18,9 @@ class NativeIntentFailure extends GatewayFailure {
             retrySameId &&
                 id != null &&
                 !const {
+                  'PIN_CANCELLED',
+                  'PIN_AUTH_FAILED',
+                  'PIN_UPGRADE_REQUIRED',
                   'AUTH_CANCELLED',
                   'AUTH_FAILED',
                   'AUTH_UNAVAILABLE',
@@ -33,6 +36,13 @@ class NativeIntentFailure extends GatewayFailure {
   final String? id;
   bool get trustInvalidated => code == 'TRUST_INVALIDATED' || code == 'CLOSED';
   static const _messages = {
+    'PIN_CANCELLED': '已取消本次PIN输入，未批准操作。',
+    'PIN_AUTH_FAILED': '本机PIN认证失败；请按持久限流状态等待后重试。',
+    'PIN_BLOCKED': '本机PIN保护暂不可用；不会切换或降级认证方式。',
+    'PIN_UPGRADE_REQUIRED': '系统认证现已可用，PIN模式已持久关闭。当前仅支持本地退出并重新授权新设备。',
+    'LOCAL_PROTECTION_STATE': '本机保护状态无效或残留冲突；不能读取旧钥匙或自动初始化。',
+    'LOCAL_PROTECTION_PERSISTENCE': '本机安全状态保存或清理未确认，不能报告操作成功。',
+    'UNSUPPORTED': '本平台尚未接通此本机保护入口。',
     'AUTH_CANCELLED': '已取消系统认证，未批准本次操作。',
     'AUTH_FAILED': '系统认证失败，未批准本次操作；不会降级到 PIN。',
     'AUTH_UNAVAILABLE': '系统无法提供强认证；PIN 密钥保护尚未开放。',

@@ -19,6 +19,9 @@ internal class ProtectedWorkflowStore(
     val namespace = context.packageName + "\u0000harmonia/workflow-state/v1\u0000" + filename
     private val maxBytes = (8 shl 20) + 8192
 
+    /** 只读存在性，不解密或因坏旧状态而允许换保护模式。 */
+    fun hasArtifacts(): Boolean = listOf("", ".bak", ".new").any { File(file.baseFile.path + it).exists() }
+
     fun load(): ByteArray {
         check(operationActive())
         if (!file.baseFile.exists() && !File(file.baseFile.path + ".bak").exists()) return ByteArray(0)

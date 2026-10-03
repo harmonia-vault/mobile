@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart' show kDebugMode;
 import '../vault_controller.dart';
 import 'native_business_adapter.dart';
 import 'native_fixture_connection.dart';
+import 'native_pin_adapter.dart';
 import 'native_ui_contract.dart';
 import 'native_workflow_adapter.dart';
 
@@ -32,13 +33,23 @@ abstract interface class NativeGatewayPort {
   );
 }
 
+abstract interface class NativeLocalProtectionPort {
+  Future<LocalProtectionStatus> localProtectionInfo(String endpoint);
+}
+
 abstract interface class NativeFixtureConnectionPort {
   Future<Map<String, Object?>> fixtureConnectionInfo();
 }
 
 class MethodChannelGatewayPort
-    implements NativeGatewayPort, NativeFixtureConnectionPort {
+    implements
+        NativeGatewayPort,
+        NativeFixtureConnectionPort,
+        NativeLocalProtectionPort {
   const MethodChannelGatewayPort();
+  @override
+  Future<LocalProtectionStatus> localProtectionInfo(String endpoint) =>
+      NativePINAdapter(endpoint).information();
   @override
   Future<Map<String, Object?>> fixtureConnectionInfo() async {
     const channel = MethodChannel('org.harmoniavault/native/v1');
@@ -161,17 +172,22 @@ class NativeVaultGateway
         InitializationGateway,
         EmailProofGateway,
         ApprovalContinuationGateway,
-        BusinessPendingGateway {
+        BusinessPendingGateway,
+        LocalProtectionGateway {
   NativeVaultGateway({
     required this.experimentalOptIn,
     this.productFixture = false,
     NativeGatewayPort? port,
     Set<String>? verifiedNativeOperations,
+    Set<String>? verifiedPINOperations,
     DateTime Function()? now,
     Future<InstanceDescriptor> Function(String)? inspector,
   }) : _port = port ?? const MethodChannelGatewayPort(),
        _verifiedOperations = Set.unmodifiable(
          verifiedNativeOperations ?? _nativeEvidence,
+       ),
+       _verifiedPINOperations = Set.unmodifiable(
+         verifiedPINOperations ?? const {},
        ),
        _now = now ?? DateTime.now,
        _inspector = inspector ?? inspectHarmoniaInstance;
@@ -179,6 +195,13 @@ class NativeVaultGateway
   ProductFixtureConnection? _fixtureConnection;
   final NativeGatewayPort _port;
   final Set<String> _verifiedOperations;
+  final Set<String> _verifiedPINOperations;
+  LocalProtectionStatus? _localProtection;
+  bool _pinPreviouslyObserved = false;
+  LocalPINPrompt? _pinPrompt;
+  LocalPINForgetPrompt? _pinForgetPrompt;
+  @override
+  LocalProtectionStatus? get localProtectionStatus => _localProtection;
   final DateTime Function() _now;
   final Future<InstanceDescriptor> Function(String) _inspector;
   static const _nativeEvidence = {
@@ -235,9 +258,217 @@ class NativeVaultGateway
   bool get realVaultReady => false;
   bool _has(String operation) =>
       experimentalOptIn &&
-      _systemStrong &&
       _runtimeOperations.contains(operation) &&
-      _verifiedOperations.contains(operation);
+      (_localProtection?.mode == LocalProtectionMode.pin
+          ? _localProtection!.pinWorkflowReady &&
+                !_localProtection!.upgradeRequired &&
+                _localProtection!.systemCapability == 'NO_SYSTEM_AUTH' &&
+                _verifiedPINOperations.contains(operation)
+          : _systemStrong && _verifiedOperations.contains(operation));
+
+  @override
+  void bindLocalPINCallbacks({
+    required LocalPINPrompt prompt,
+    required LocalPINForgetPrompt confirmForget,
+  }) {
+    _pinPrompt = prompt;
+    _pinForgetPrompt = confirmForget;
+  }
+
+  @override
+  Future<void> refreshLocalProtection() async {
+    if (!experimentalOptIn ||
+        _endpoint.isEmpty ||
+        _port is! NativeLocalProtectionPort) {
+      return;
+    }
+    final epoch = _scopeEpoch;
+    try {
+      final status = await (_port as NativeLocalProtectionPort)
+          .localProtectionInfo(_endpoint);
+      if (epoch != _scopeEpoch) throw const GatewayFailure('原本机保护范围已关闭。');
+      _localProtection = status;
+      if (status.mode == LocalProtectionMode.pin || status.upgradeRequired) {
+        _pinPreviouslyObserved = true;
+      }
+      if (status.mode != LocalProtectionMode.system ||
+          status.systemCapability != 'SYSTEM_READY') {
+        _systemStrong = false;
+      }
+      if (status.mode == LocalProtectionMode.pin ||
+          status.mode == LocalProtectionMode.blocked) {
+        _protectedDeviceExists = status.deviceExists;
+      }
+    } on MissingPluginException {
+      if (_pinPreviouslyObserved) {
+        _blockLocalProtection();
+        throw const GatewayFailure(
+          '原PIN状态不可验证，不能切换系统provider。',
+          suspendVault: true,
+        );
+      }
+      // 仅从未有PIN的未实现平台沿其既有系统provider，不授PIN能力。
+      _localProtection = null;
+    } on PlatformException catch (error) {
+      if (error.code == 'UNSUPPORTED' && !_pinPreviouslyObserved) {
+        _localProtection = null;
+        return;
+      }
+      _blockLocalProtection();
+      throw GatewayFailure(
+        NativeIntentFailure(_fixedCode(error.code)).message,
+        suspendVault: true,
+      );
+    } catch (_) {
+      _blockLocalProtection();
+      throw const GatewayFailure('本机保护状态不可验证，已关闭明文与业务能力。', suspendVault: true);
+    }
+  }
+
+  void _blockLocalProtection() {
+    _systemStrong = false;
+    _trusted = null;
+    _localProtection = LocalProtectionStatus(
+      mode: LocalProtectionMode.blocked,
+      systemCapability: 'BLOCKED',
+      deviceExists:
+          _protectedDeviceExists || (_localProtection?.deviceExists ?? false),
+      pinSetupAvailable: false,
+      upgradeRequired: _localProtection?.upgradeRequired ?? false,
+      pinWorkflowReady: false,
+      pinForgetAvailable: _localProtection?.pinForgetAvailable ?? false,
+      delaySeconds: _localProtection?.delaySeconds ?? 0,
+    );
+  }
+
+  static String _fixedCode(String code) =>
+      RegExp(r'^[A-Z_]{1,64}$').hasMatch(code) ? code : 'REJECTED';
+
+  Future<LocalPINInput> _requestPIN(
+    String operation, {
+    bool setup = false,
+  }) async {
+    final callback = _pinPrompt;
+    if (callback == null) throw const GatewayFailure('本机PIN输入界面尚未绑定。');
+    final epoch = _scopeEpoch;
+    final input = await callback(
+      LocalPINPromptRequest(
+        setup: setup,
+        operation: operation,
+        delaySeconds: _localProtection?.delaySeconds ?? 0,
+      ),
+    );
+    if (input == null) throw NativeIntentFailure('PIN_CANCELLED');
+    if (epoch != _scopeEpoch || _cleanupPending) {
+      input.clear();
+      throw const GatewayFailure('原设备范围已关闭，未使用本次PIN。');
+    }
+    return input;
+  }
+
+  @override
+  Future<void> setupLocalPIN() async {
+    await refreshLocalProtection();
+    if (_localProtection?.pinSetupAvailable != true ||
+        _cleanupPending ||
+        _endpoint.isEmpty) {
+      throw const GatewayFailure('只有真正没有系统认证能力且无旧设备时才能设置PIN。');
+    }
+    final epoch = _scopeEpoch;
+    final input = await _requestPIN('setupLocalPIN', setup: true);
+    try {
+      final created = await _platform(
+        () => NativePINAdapter(_endpoint).setup(input),
+      );
+      if (epoch != _scopeEpoch) throw const GatewayFailure('原设备范围已关闭。');
+      if (created['version'] != 1 ||
+          created['trusted'] != false ||
+          created['deviceId'] is! String ||
+          !RegExp(r'^[a-f0-9]{64}$').hasMatch(created['deviceId'] as String)) {
+        throw const GatewayFailure('PIN设置结果不能证明设备可信。');
+      }
+      _protectedDeviceExists = true;
+      await refreshLocalProtection();
+    } finally {
+      input.clear();
+    }
+  }
+
+  @override
+  Future<void> forgetLocalPIN() async {
+    if (_endpoint.isEmpty || _localProtection?.pinForgetAvailable != true) {
+      throw const GatewayFailure('没有原生确认的PIN所属清理资格；不能清理系统保护数据。');
+    }
+    final epoch = _scopeEpoch;
+    final confirm = _pinForgetPrompt;
+    if (confirm == null || !await confirm()) return;
+    if (epoch != _scopeEpoch) throw const GatewayFailure('原设备范围已关闭，未清理不同范围。');
+    _scopeEpoch++;
+    _cleanupPending = true;
+    _trusted = null;
+    _pendingUnknown = false;
+    _checkpoint = 0;
+    _deviceId = '';
+    _approvalPendingId = null;
+    _approvalVersion = 0;
+    _approvalProgress = const DeviceApprovalProgress(state: 'none');
+    try {
+      await NativePINAdapter(_endpoint).forget();
+      _protectedDeviceExists = false;
+      _initializationId = null;
+      _cleanupPending = false;
+      await refreshLocalProtection();
+    } on PlatformException catch (error) {
+      throw NativeIntentFailure(_fixedCode(error.code));
+    }
+  }
+
+  Future<Map<String, Object?>> _executeUsingProvider(
+    String endpoint,
+    String op,
+    Map<String, String> fields,
+  ) async {
+    await refreshLocalProtection();
+    _require(op);
+    if (_localProtection?.mode != LocalProtectionMode.pin) {
+      return _port.execute(endpoint, op, fields);
+    }
+    final input = await _requestPIN(op);
+    try {
+      return await NativePINAdapter(endpoint).execute(op, fields, input);
+    } finally {
+      input.clear();
+    }
+  }
+
+  Future<Map<String, Object?>> _approveUsingProvider(
+    String endpoint,
+    int version,
+    String pairingId,
+    Uint8List code,
+    List<NativeApprovalSelection> selections,
+  ) async {
+    await refreshLocalProtection();
+    _require(_approvalOperation);
+    if (_localProtection?.mode != LocalProtectionMode.pin) {
+      return _port.approve(endpoint, version, pairingId, code, selections);
+    }
+    final input = await _requestPIN(_approvalOperation);
+    try {
+      return await NativePINAdapter(endpoint).approve(
+        _approvalOperation,
+        {
+          'pairingId': pairingId,
+          'selections': jsonEncode(selections.map((s) => s.toJson()).toList()),
+        },
+        input,
+        code,
+      );
+    } finally {
+      input.clear();
+    }
+  }
+
   @override
   Set<String> get capabilities => Set.unmodifiable({
     if (_has('register')) 'registerAccount',
@@ -309,7 +540,17 @@ class NativeVaultGateway
       final code = RegExp(r'^[A-Z_]{1,64}$').hasMatch(e.code)
           ? e.code
           : 'REJECTED';
-      throw NativeIntentFailure(code, retrySameId: id != null, id: id);
+      throw NativeIntentFailure(
+        code,
+        retrySameId:
+            id != null &&
+            !const {
+              'PIN_CANCELLED',
+              'PIN_AUTH_FAILED',
+              'PIN_UPGRADE_REQUIRED',
+            }.contains(code),
+        id: id,
+      );
     }
   }
 
@@ -334,7 +575,7 @@ class NativeVaultGateway
     }
     final epoch = _scopeEpoch, endpoint = _endpoint;
     final result = await _platform(
-      () => _port.execute(endpoint, op, fields),
+      () => _executeUsingProvider(endpoint, op, fields),
       id: originalId,
     );
     if (epoch != _scopeEpoch) {
@@ -366,6 +607,7 @@ class NativeVaultGateway
       throw const GatewayFailure('原生能力配置不符合当前协议，已拒绝。');
     }
     _systemStrong = caps['systemStrongAuthentication'] == true;
+    if (caps['appPINDeviceExists'] == true) _pinPreviouslyObserved = true;
     _protectedDeviceExists = caps['protectedDeviceExists'] == true;
     _runtimeOperations = Set.unmodifiable(operations.cast<String>());
     if (productFixture) {
@@ -425,6 +667,15 @@ class NativeVaultGateway
 
   Future<void> _ensureDevice() async {
     final epoch = _scopeEpoch;
+    await refreshLocalProtection();
+    if (_localProtection?.mode == LocalProtectionMode.pin) {
+      if (!_localProtection!.deviceExists ||
+          _localProtection!.upgradeRequired) {
+        throw const GatewayFailure('本机PIN状态不能创建或解锁设备。');
+      }
+      _protectedDeviceExists = true;
+      return;
+    }
     final caps = await _port.capabilities();
     if (epoch != _scopeEpoch || _cleanupPending) {
       throw const GatewayFailure('原设备范围已关闭，未生成新钥匙。');
@@ -601,6 +852,9 @@ class NativeVaultGateway
       // 平台在Go前确定拒绝，没有POST/签包；可解除本次本地等待。
       // Go/密封异常和HTTP结果不明仍必须原ID查询，不能推测未发送。
       if (const {
+        'PIN_CANCELLED',
+        'PIN_AUTH_FAILED',
+        'PIN_UPGRADE_REQUIRED',
         'AUTH_CANCELLED',
         'AUTH_FAILED',
         'AUTH_UNAVAILABLE',
@@ -758,8 +1012,13 @@ class NativeVaultGateway
     );
     try {
       final result = await _platform(
-        () =>
-            _port.approve(endpoint, version, draft.pairingId, code, selections),
+        () => _approveUsingProvider(
+          endpoint,
+          version,
+          draft.pairingId,
+          code,
+          selections,
+        ),
         id: draft.pairingId,
       );
       if (!sameScope()) {

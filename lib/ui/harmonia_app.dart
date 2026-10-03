@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
+import '../native/native_pin_adapter.dart' show LocalProtectionGateway;
 import '../vault_controller.dart';
 import '../security/sensitive_input_guard.dart';
 import 'design_system.dart';
+import 'local_pin_ui.dart';
 
 class HarmoniaApp extends StatefulWidget {
   const HarmoniaApp({super.key, required this.controller});
@@ -17,11 +19,43 @@ class HarmoniaApp extends StatefulWidget {
   State<HarmoniaApp> createState() => _HarmoniaAppState();
 }
 
-class _HarmoniaAppState extends State<HarmoniaApp> {
+class _HarmoniaAppState extends State<HarmoniaApp>
+    with WidgetsBindingObserver {
   late final _delegate = _Delegate(widget.controller);
+
+  bool get _localProtection =>
+      widget.controller.gateway is LocalProtectionGateway;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    if (widget.controller.gateway case final LocalProtectionGateway g) {
+      // Dialogs only collect one-shot input; the gateway owns validation.
+      g.bindLocalPINCallbacks(
+        prompt: (request) async {
+          final ctx = mounted ? _delegate._nav.currentContext : null;
+          return ctx == null ? null : showLocalPINPrompt(ctx, request);
+        },
+        confirmForget: () async {
+          final ctx = mounted ? _delegate._nav.currentContext : null;
+          return ctx != null && await showLocalPINForgetPrompt(ctx);
+        },
+      );
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final c = widget.controller;
+    if (state == AppLifecycleState.resumed && _localProtection && !c.busy) {
+      unawaited(c.refreshLocalProtection());
+    }
+  }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _delegate.dispose();
     super.dispose();
   }
@@ -908,6 +942,7 @@ class _AccountFormState extends State<_AccountForm> {
           icon: Icons.verified_user_outlined,
         ),
         if (rows.isNotEmpty) HSection(children: rows),
+        ...localPINAccountEntries(c),
         const HHint('密码不会被保存，提交后输入框立即清空。', icon: Icons.lock_outline),
         HSurface(
           child: HRow(
@@ -2403,10 +2438,11 @@ class _AccountSecurity extends StatelessWidget {
             value: false,
             onChanged: null,
             title: Text('打开 App 时验证'),
-            subtitle: Text('此版本暂不支持 App 锁与 PIN。'),
+            subtitle: Text('此版本暂不支持 App 锁。'),
           ),
         ],
       ),
+      ...localProtectionSecurityEntries(c),
       HSection(
         title: '恢复',
         children: [

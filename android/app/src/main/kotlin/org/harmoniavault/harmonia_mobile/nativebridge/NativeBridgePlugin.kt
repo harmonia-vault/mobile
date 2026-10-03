@@ -9,6 +9,7 @@ import android.os.Looper
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import org.harmoniavault.harmonia_mobile.nativebridge.pinlocal.*
 import org.harmoniavault.go.mobilebridge.Mobilebridge
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -43,6 +44,12 @@ class NativeBridgePlugin internal constructor(
     @Volatile private var activeWorkflow: VaultWorkflow? = null
     @Volatile private var pendingShortCode: ByteArray? = null
 
+    private val pinOwnerGate = PinOperationOwnerGate<NativePinOperation> { it.cancel() }
+    @Volatile private var pendingPIN: PinChannelRequest? = null
+    private val pinDispatcher = PinMethodChannelDispatcher(activity, workflowFilename,
+        { store.hasArtifacts() || ProtectedWorkflowStore(activity, workflowFilename).hasArtifacts() },
+        { recoveryRegistry.clear() }, { nativeCertificates() }, pinOwnerGate::register)
+
     init {
         check(productFixture == null || additionalCA.contentEquals(productFixture.publicCA()))
         channel.setMethodCallHandler(this)
@@ -50,6 +57,7 @@ class NativeBridgePlugin internal constructor(
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         if (disposed) { result.error("LOCKED", "原生桥已关闭。", null); return }
+        if (call.method in PinMethodChannelDispatcher.METHODS) { pinMethod(call, result); return }
         when (call.method) {
             "fixtureConnectionInfo" -> {
                 if (call.arguments != null) { invalid(result); return }
@@ -58,9 +66,14 @@ class NativeBridgePlugin internal constructor(
             }
             "capabilities" -> {
                 if (call.arguments != null) { invalid(result); return }
-                result.success(mapOf("version" to 1, "goCore" to true,
-                    "systemStrongAuthentication" to store.supported(), "protectedDeviceExists" to store.exists(),
-                    "realVaultReady" to false, "softwareDeviceKeys" to true))
+                try {
+                    val pinExists = pinDispatcher.hasArtifacts()
+                    result.success(mapOf("version" to 1, "goCore" to true,
+                        "systemStrongAuthentication" to (!pinExists && store.supported()), "protectedDeviceExists" to store.exists(),
+                        "appPINDeviceExists" to pinExists,
+                        "appPINWorkflowReady" to false,
+                        "realVaultReady" to false, "softwareDeviceKeys" to true))
+                } catch (_: Exception) { recoveryRegistry.clear(); result.error("LOCAL_PROTECTION_STATE", "本机保护状态不可用。", null) }
             }
             "executePublic" -> {
                 val command = call.arguments as? String
@@ -102,6 +115,38 @@ class NativeBridgePlugin internal constructor(
         }
     }
 
+    private fun pinMethod(call: MethodCall, result: MethodChannel.Result) {
+        val request = try { PinChannelRequest.parse(call.method, call.arguments) }
+            catch (_: Exception) { invalid(result); return }
+        if (!acceptsEndpoint(request.endpoint)) { request.close(); invalid(result); return }
+        if (!acquire(result)) { request.close(); return }
+        pendingPIN = request
+        worker.execute {
+            try {
+                check(!disposed)
+                val value = pinDispatcher.execute(request)
+                check(!disposed)
+                finish(result, value)
+            } catch (failure: PinLocalException) {
+                recoveryRegistry.clear()
+                val code = when (failure.fault) {
+                    PinLocalFault.BUSY -> "BUSY"
+                    PinLocalFault.CONFIGURATION -> "INVALID_COMMAND"
+                    PinLocalFault.UPGRADE_REQUIRED -> "PIN_UPGRADE_REQUIRED"
+                    PinLocalFault.PERSISTENCE -> "LOCAL_PROTECTION_PERSISTENCE"
+                    PinLocalFault.STATE -> "LOCAL_PROTECTION_STATE"
+                    PinLocalFault.AUTHENTICATION -> "PIN_AUTH_FAILED"
+                    PinLocalFault.CLOSED -> "PIN_BLOCKED"
+                    PinLocalFault.BLOCKED -> "PIN_BLOCKED"
+                }
+                finish(result, code = code)
+            } catch (_: Exception) { recoveryRegistry.clear(); finish(result, code = "PIN_BLOCKED") }
+            finally { request.close(); if (pendingPIN === request) pendingPIN = null }
+        }
+    }
+
+    private fun acceptsEndpoint(endpoint: String): Boolean = productFixture?.acceptsEndpoint(endpoint) ?: true
+
     private fun acceptsWorkflowEndpoint(command: String): Boolean = productFixture?.let { fixture ->
         try { fixture.acceptsEndpoint(JSONObject(command).getString("endpoint")) }
         catch (_: Exception) { false }
@@ -131,6 +176,12 @@ class NativeBridgePlugin internal constructor(
     }
 
     private fun authenticated(result: MethodChannel.Result, create: Boolean, command: String?, workflow: Boolean = false, shortCode: ByteArray? = null, enrollment: Boolean = false) {
+        // 既有PIN包/alias/坏状态不能因系统后来可用而走新的系统provider。
+        // 此endpoint-less入口仅拒绝；实际PIN info/operation会持久升级latch。
+        val hasPIN = try { pinDispatcher.hasArtifacts() } catch (_: Exception) {
+            clearApproval(shortCode); recoveryRegistry.clear(); result.error("LOCAL_PROTECTION_STATE", "本机保护状态不可用。", null); return
+        }
+        if (hasPIN) { clearApproval(shortCode); recoveryRegistry.clear(); result.error("PIN_UPGRADE_REQUIRED", "当前为PIN保护模式；不能自动切换系统provider。", null); return }
         if (!store.supported() || Build.VERSION.SDK_INT < 30) {
             clearApproval(shortCode)
             recoveryRegistry.clear()
@@ -235,12 +286,16 @@ class NativeBridgePlugin internal constructor(
     }
 
     fun dispose() {
-        disposed = true
-        recoveryRegistry.close()
+        // 所有owner分别尝试关闭；某一取消失败也不能阻止其它输入/通道退役。
+        var failed = false
+        try { pinOwnerGate.retire { disposed = true } } catch (_: Exception) { failed = true }
+        try { recoveryRegistry.close() } catch (_: Exception) { failed = true }
+        pendingPIN?.close()
         clearApproval(pendingShortCode)
-        activeWorkflow?.cancel()
-        cancellation?.cancel()
+        try { activeWorkflow?.cancel() } catch (_: Exception) { failed = true }
+        try { cancellation?.cancel() } catch (_: Exception) { failed = true }
         channel.setMethodCallHandler(null)
         worker.shutdown()
+        if (failed) throw IllegalStateException("native owner cleanup unconfirmed")
     }
 }

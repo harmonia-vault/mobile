@@ -2,6 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+
+import 'native/native_pin_adapter.dart';
+
 import 'package:flutter/widgets.dart' show AppLifecycleState;
 
 enum AccessRole {
@@ -584,6 +587,50 @@ class VaultController extends ChangeNotifier {
       r.status == AuthorizationRequestStatus.pending &&
       r.expiresAt.isAfter(_now());
 
+  LocalProtectionStatus? get localProtectionStatus =>
+      gateway is LocalProtectionGateway
+      ? (gateway as LocalProtectionGateway).localProtectionStatus
+      : null;
+
+  Future<void> refreshLocalProtection() => _run((epoch) async {
+    if (gateway is! LocalProtectionGateway) return;
+    try {
+      await (gateway as LocalProtectionGateway).refreshLocalProtection();
+    } catch (_) {
+      _suspendVault();
+      rethrow;
+    }
+    final status = localProtectionStatus;
+    if (status?.upgradeRequired == true ||
+        status?.mode == LocalProtectionMode.blocked) {
+      _suspendVault();
+    }
+  });
+
+  Future<void> setupLocalPIN() => _run((epoch) async {
+    if (gateway is! LocalProtectionGateway ||
+        _session.stage != SessionStage.signedOut) {
+      throw const GatewayFailure('须先完成本机退出，才能设置新的PIN设备。');
+    }
+    await (gateway as LocalProtectionGateway).setupLocalPIN();
+  });
+
+  Future<void> forgetLocalPIN() => _run((epoch) async {
+    if (gateway is! LocalProtectionGateway) {
+      throw const GatewayFailure('本平台未接本机PIN清理。');
+    }
+    // 即使清理或确认中断，也先关本机明文视图；不能让失败清理继续暴露缓存。
+    _suspendVault();
+    _notify();
+    await (gateway as LocalProtectionGateway).forgetLocalPIN();
+    if ((gateway as LocalProtectionGateway)
+            .localProtectionStatus
+            ?.deviceExists ==
+        false) {
+      _resetLocalSession();
+    }
+  });
+
   void clearError() {
     _error = null;
     _notify();
@@ -740,6 +787,9 @@ class VaultController extends ChangeNotifier {
     }
     _endpoint = candidate.toString();
     _instance = verified;
+    if (gateway is LocalProtectionGateway) {
+      await (gateway as LocalProtectionGateway).refreshLocalProtection();
+    }
     _locations
       ..clear()
       ..add(
@@ -770,6 +820,9 @@ class VaultController extends ChangeNotifier {
     }
     if (gateway is SessionVaultGateway) {
       await (gateway as SessionVaultGateway).initialize(_endpoint);
+    }
+    if (gateway is LocalProtectionGateway) {
+      await (gateway as LocalProtectionGateway).refreshLocalProtection();
     }
   });
 
