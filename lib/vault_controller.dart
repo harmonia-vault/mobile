@@ -954,10 +954,42 @@ class VaultController extends ChangeNotifier {
     return false;
   }
 
+  // 原生认证结果可能先于Flutter resumed到达。仅等已观察的前台恢复，
+  // 不清隐私遮罩、不改变trust，后台/退出/销毁/旧操作一律停止。
+  Future<void> _awaitVaultForeground(int epoch) async {
+    if (!_privacyMask) return;
+    final operation = _activeOperation;
+    final deadline = Stopwatch()..start();
+    while (_privacyMask) {
+      if (_disposed ||
+          epoch != _epoch ||
+          operation == null ||
+          operation != _activeOperation ||
+          !_foreground ||
+          _privacyLocked ||
+          _vaultSuspended ||
+          !(_session.stage == SessionStage.trusted || previewMode) ||
+          deadline.elapsed >= const Duration(seconds: 5)) {
+        throw const GatewayFailure('应用尚未恢复到前台，已停止本次读取。', suspendVault: true);
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    if (_disposed ||
+        epoch != _epoch ||
+        operation != _activeOperation ||
+        !_foreground ||
+        !canEnterVault) {
+      throw const GatewayFailure('应用尚未恢复到前台，已停止本次读取。', suspendVault: true);
+    }
+  }
+
   Future<void> _pull(int epoch) async {
+    await _awaitVaultForeground(epoch);
     if (!canEnterVault) throw const GatewayFailure('完成设备授权后才能读取保险库。');
     final pulled = await gateway.pull();
-    if (epoch != _epoch || !canEnterVault) return;
+    if (_disposed || epoch != _epoch) return;
+    await _awaitVaultForeground(epoch);
+    if (_disposed || epoch != _epoch || !canEnterVault) return;
     if (pulled.checkpoint < _snapshot.checkpoint) {
       throw const GatewayFailure('返回的检查点倒退，已拒绝更新。');
     }
@@ -985,7 +1017,9 @@ class VaultController extends ChangeNotifier {
     final session = await (gateway as SessionVaultGateway).restoreSession();
     if (epoch != _epoch) return;
     _applySession(session);
-    if (canEnterVault) await _pull(epoch);
+    if (_session.stage == SessionStage.trusted || previewMode) {
+      await _pull(epoch);
+    }
   });
   Future<void> signIn(String email, String password) => _run((epoch) async {
     if (!serverVerified || !supports('loginAccount')) {
