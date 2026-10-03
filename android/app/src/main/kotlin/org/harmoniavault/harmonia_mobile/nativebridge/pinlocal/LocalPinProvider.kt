@@ -1,6 +1,7 @@
 package org.harmoniavault.harmonia_mobile.nativebridge.pinlocal
 
 import android.content.Context
+import org.harmoniavault.harmonia_mobile.nativebridge.NativeSlotOwner
 import java.io.File
 import java.security.KeyStore
 import java.util.concurrent.atomic.AtomicBoolean
@@ -27,12 +28,13 @@ internal class LocalPinProvider(
     private val systemKeyFilename: String = "device-keys-v1.gcm",
     private val systemStateFilename: String = "workflow-state-v1.gcm",
     private val systemKeyAlias: String = "harmonia/device-key-wrap/v1",
+    private val slotOwner: NativeSlotOwner? = null,
 ) : AutoCloseable {
     private val capability = PinCapabilityClassifier(context)
     private val busy = AtomicBoolean()
     @Volatile private var closed = false
     private val scope = core.scope.also { it.validate(); check(it.packageName == context.packageName) }
-    private val store = PinKeystoreStore(context, PinSlot(scope.namespace, scope.slot, scope.endpoint), retireOwners)
+    private val store = PinKeystoreStore(context, PinSlot(scope.namespace, scope.slot, scope.endpoint), retireOwners, slotOwner = slotOwner)
     private fun availableForSetup() {
         when (capability.current()) {
             PinSystemVerdict.NO_SYSTEM_AUTH -> Unit
@@ -53,12 +55,12 @@ internal class LocalPinProvider(
         } finally { busy.set(false) }
     }
     private fun freshIdentityOnly() {
-        for (name in listOf(systemKeyFilename, systemStateFilename)) {
+        for (name in listOf(systemKeyFilename, systemKeyFilename + ".setup-v1.mac", systemStateFilename)) {
             if (!name.matches(Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,127}"))) throw PinLocalException(PinLocalFault.CONFIGURATION)
             for (suffix in listOf("", ".bak", ".new")) if (File(File(context.noBackupFilesDir, "harmonia"), name + suffix).exists()) throw PinLocalException(PinLocalFault.STATE)
         }
         val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        if (ks.containsAlias(systemKeyAlias)) throw PinLocalException(PinLocalFault.STATE)
+        if (ks.containsAlias(systemKeyAlias) || ks.containsAlias(systemKeyAlias + "/setup-integrity/v1")) throw PinLocalException(PinLocalFault.STATE)
     }
     fun provision(pin: ByteArray, fullReentry: ByteArray) {
         try { operation {
@@ -99,12 +101,16 @@ internal class LocalPinProvider(
         if (!busy.compareAndSet(false, true)) { retireOwners(); throw PinLocalException(PinLocalFault.BUSY) }
         closed = true
         try {
-            retireOwners(); core.close()
+            core.close()
+            val owner = slotOwner ?: throw PinLocalException(PinLocalFault.CLOSED)
+            owner.clear {
             // 原provider可能已因损坏永久关闭。明确本地清理只用固定slot，
             // 不读取/解包旧钥、不创建MAC key、不允许云删除。
-            val cleanupStore = PinKeystoreStore(context, PinSlot(scope.namespace, scope.slot, scope.endpoint), retireOwners)
+            val cleanupStore = PinKeystoreStore(context, PinSlot(scope.namespace, scope.slot, scope.endpoint), retireOwners, slotOwner = slotOwner)
             cleanupStore.acquire()
             try { cleanupStore.deleteLocalPacket(); cleanup.clearProtectedWorkflowAndDevice() } finally { cleanupStore.release() }
+            }
+            retireOwners()
         } catch (_: Exception) { retireOwners(); throw PinLocalException(PinLocalFault.PERSISTENCE) }
         finally { busy.set(false) }
     }

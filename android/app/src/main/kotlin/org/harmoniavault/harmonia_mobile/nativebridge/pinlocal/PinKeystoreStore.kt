@@ -1,6 +1,8 @@
 package org.harmoniavault.harmonia_mobile.nativebridge.pinlocal
 
 import android.content.Context
+import org.harmoniavault.harmonia_mobile.nativebridge.NativeSlotOwner
+import org.harmoniavault.harmonia_mobile.nativebridge.NativeSlotBusyException
 import android.os.Process
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyInfo
@@ -180,6 +182,7 @@ internal class PinKeystoreStore(
     private val retireOwner: () -> Unit,
     private val beforeWrite: () -> Unit = {},
     private val beforeAliasRetirement: () -> Unit = {},
+    private val slotOwner: NativeSlotOwner? = null,
 ) : PinDurableStore {
     private val directory = File(context.noBackupFilesDir, "harmonia/app-pin")
     private val slotID: String
@@ -189,6 +192,8 @@ internal class PinKeystoreStore(
     @Volatile private var fixedScope: PinScope? = null
     @Volatile private var closed = false
     @Volatile private var upgradeLatched = false
+    private var standaloneOwner: NativeSlotOwner? = null
+    private fun owner() = slotOwner ?: standaloneOwner ?: throw PinLocalException(PinLocalFault.CLOSED)
     init {
         slot.validate(); reject(Process.myUid() >= 0 && context.applicationInfo.uid == Process.myUid(), PinLocalFault.CONFIGURATION)
         slotID = hex(digest((context.packageName + "\u0000" + slot.namespace + "\u0000" + slot.slot).toByteArray(Charsets.UTF_8)))
@@ -225,29 +230,37 @@ internal class PinKeystoreStore(
     }
     private fun mac(body: ByteArray, create: Boolean = false): ByteArray = Mac.getInstance("HmacSHA256").run { init(key(create)); doFinal(body) }
     private fun directorySync() {
-        val fd = Os.open(directory.path, OsConstants.O_RDONLY, 0)
-        try { Os.fsync(fd) } finally { Os.close(fd) }
+        NativeSlotOwner.syncDirectory(directory)
     }
     override fun acquire() = guard {
         reject(!closed, PinLocalFault.CLOSED)
+        if (slotOwner == null) standaloneOwner = try { NativeSlotOwner.acquire(context, slot.slot, pinNamespace = slot.namespace) }
+            catch (_: NativeSlotBusyException) { throw PinLocalException(PinLocalFault.BUSY) }
+        try {
+        owner().read { }
         reject(directory.exists() || directory.mkdirs(), PinLocalFault.PERSISTENCE)
         reject(directory.isDirectory, PinLocalFault.PERSISTENCE)
         safePaths(); Os.chmod(directory.path, 0b111000000)
+        NativeSlotOwner.syncDirectory(directory); NativeSlotOwner.syncDirectory(checkNotNull(directory.parentFile))
         lock.acquire()
         try { Os.chmod(File(directory, "$slotID.lock").path, 0b110000000) } catch (failure: Exception) { lock.release(); throw failure }
+        } catch (failure: Exception) {
+            standaloneOwner?.close(); standaloneOwner = null; throw failure
+        }
     }
-    override fun release() = guard { lock.release() }
+    override fun release() = guard {
+        var failed = false
+        try { lock.release() } catch (_: Exception) { failed = true }
+        try { standaloneOwner?.close() } catch (_: Exception) { failed = true }
+        standaloneOwner = null
+        reject(!failed, PinLocalFault.PERSISTENCE)
+    }
     private fun readPacket(): ByteArray {
         requireHeld(); safePaths()
-        return atomic.openRead().use { input ->
-            val output = ByteArrayOutputStream(); val buffer = ByteArray(4096)
-            while (output.size() <= PinPacketCodec.MAX_PACKET) {
-                val count = input.read(buffer, 0, minOf(buffer.size, PinPacketCodec.MAX_PACKET + 1 - output.size()))
-                if (count < 0) break
-                output.write(buffer, 0, count)
-            }
-            output.toByteArray().also { reject(it.size in 40..PinPacketCodec.MAX_PACKET) }
-        }
+        owner().read { }
+        return NativeSlotOwner.readAtomicBytes(atomic.baseFile, PinPacketCodec.MAX_PACKET)?.also {
+            reject(it.size in 40..PinPacketCodec.MAX_PACKET)
+        } ?: throw PinLocalException(PinLocalFault.PERSISTENCE)
     }
     fun readProtected(): PinProtectedSnapshot = guard {
         val snapshot = PinPacketCodec.open(readPacket()) { body -> mac(body) }
@@ -263,17 +276,21 @@ internal class PinKeystoreStore(
         if (snapshot.upgradeRequired) { retireOwner(); throw PinLocalException(PinLocalFault.UPGRADE_REQUIRED) }
         return snapshot.attempts
     }
-    private fun write(snapshot: PinProtectedSnapshot, createKey: Boolean = false) {
+    private fun write(snapshot: PinProtectedSnapshot, createKey: Boolean = false, retireAliasOnFailure: Boolean = false) = owner().mutate(
+        onUnchangedFailure = if (retireAliasOnFailure) ({ retireIntegrityAliasRaw() }) else null,
+    ) {
         requireHeld(); safePaths(); beforeWrite()
         val packet = PinPacketCodec.seal(snapshot) { body -> mac(body, createKey) }
         val output = atomic.startWrite()
+        var publishing = false
         try {
             output.write(packet); Os.fchmod(output.fd, 0b110000000); output.fd.sync()
+            publishing = true
             atomic.finishWrite(output); directorySync()
             reject(readPacket().contentEquals(packet), PinLocalFault.PERSISTENCE)
             val readback = readProtected()
             reject(readback.scope == snapshot.scope && readback.record.contentEquals(snapshot.record) && readback.attempts == snapshot.attempts && readback.upgradeRequired == snapshot.upgradeRequired, PinLocalFault.PERSISTENCE)
-        } catch (failure: Exception) { atomic.failWrite(output); throw failure }
+        } catch (failure: Exception) { if (!publishing) atomic.failWrite(output); throw failure }
     }
     fun provision(snapshot: PinProtectedSnapshot) = guard {
         requireHeld()
@@ -294,12 +311,13 @@ internal class PinKeystoreStore(
         reject(charge || settle)
         write(current.copy(attempts = next))
     }
-    private fun retireIntegrityAlias() {
+    private fun retireIntegrityAliasRaw() {
         beforeAliasRetirement()
         val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         if (ks.containsAlias(alias)) ks.deleteEntry(alias)
         reject(!ks.containsAlias(alias), PinLocalFault.PERSISTENCE)
     }
+    private fun retireIntegrityAlias() = owner().mutate { retireIntegrityAliasRaw() }
     fun markUpgradeRequired(expected: PinScope) {
         var publishing = false
         try { guard {
@@ -307,7 +325,7 @@ internal class PinKeystoreStore(
             reject(snapshot.scope == expected)
             if (!snapshot.upgradeRequired) {
                 publishing = true
-                write(snapshot.copy(upgradeRequired = true))
+                write(snapshot.copy(upgradeRequired = true), retireAliasOnFailure = true)
             }
             upgradeLatched = true
         } } catch (failure: Exception) {
@@ -315,18 +333,18 @@ internal class PinKeystoreStore(
                 // 同一原slot锁内退役该完整性alias。旧false包不能在重启后
                 // 又被正常App验证；若Keystore也失败，仅报持久化失败。
                 closed = true; retireOwner()
-                try { retireIntegrityAlias() } catch (_: Exception) { throw PinLocalException(PinLocalFault.PERSISTENCE) }
+                // write已在同owner内仅原完整包未变时尝试销毁alias；未知提交不重读expected。
                 throw PinLocalException(PinLocalFault.PERSISTENCE)
             }
             throw failure
         }
     }
     /** 先令正常App无法验证旧包，再删除本slot；不是对离线副本的可撤回保证。 */
-    fun deleteLocalPacket() = guard {
-        requireHeld(); retireOwner()
+    fun deleteLocalPacket() = guard { owner().mutate {
+        requireHeld()
         retireIntegrityAlias()
         atomic.delete(); directorySync()
         reject(listOf("", ".bak", ".new").none { File(atomic.baseFile.path + it).exists() }, PinLocalFault.PERSISTENCE)
         fixedScope = null; closed = true
-    }
+    } }
 }

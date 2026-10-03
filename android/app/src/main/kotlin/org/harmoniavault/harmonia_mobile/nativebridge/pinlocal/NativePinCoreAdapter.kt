@@ -56,7 +56,7 @@ internal class NativePinCoreAdapter private constructor(
     }
 
     fun cancel() {
-        try { slot.cancel() } finally { native.cancel() }
+        try { native.cancel() } finally { slot.cancel() }
     }
 
     override fun close() {
@@ -76,10 +76,11 @@ internal class NativePinCoreAdapter private constructor(
             var armedSetupCleanup = false
             var native: LocalPINCore? = null
             try {
+                slot.requireNoSystemArtifacts()
                 if (nativeCA.size > 2 shl 20 || ((mode == PinNativeMode.APPROVAL || mode == PinNativeMode.ENROLLMENT) != shortCode.isNotEmpty())) throw PinLocalException(PinLocalFault.CONFIGURATION)
                 if (shortCode.isNotEmpty() && (shortCode.size != 8 || shortCode.any { it.toInt() !in 48..57 })) throw PinLocalException(PinLocalFault.CONFIGURATION)
                 val capability = PinCapabilityClassifier(context)
-                val store = PinKeystoreStore(context, configuration, slot::retireOwners)
+                val store = PinKeystoreStore(context, configuration, slot::retireOwners, slotOwner = slot.owner)
                 val binding: PinScope
                 val lifecycle = object : LocalPINLifecycle { override fun retireOwners() = slot.retireOwners() }
                 if (mode == PinNativeMode.SETUP) {
@@ -142,10 +143,10 @@ internal class NativePinOperation internal constructor(
     private val slot: PinNativeSlot,
     private val mode: PinNativeMode,
 ) : AutoCloseable {
-    private val provider = LocalPinProvider(context, adapter, slot::retireOwners, slot)
+    private val provider = LocalPinProvider(context, adapter, slot::retireOwners, slot, slotOwner = slot.owner)
     private val closed = AtomicBoolean()
     private val invoked = AtomicBoolean()
-    private val durable = PinKeystoreStore(context, slot.configuration, slot::retireOwners)
+    private val durable = PinKeystoreStore(context, slot.configuration, slot::retireOwners, slotOwner = slot.owner)
     val scope get() = adapter.scope
 
     fun provision(pin: ByteArray, fullReentry: ByteArray) {

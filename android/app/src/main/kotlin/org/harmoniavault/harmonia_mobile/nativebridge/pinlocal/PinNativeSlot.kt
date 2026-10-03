@@ -1,6 +1,8 @@
 package org.harmoniavault.harmonia_mobile.nativebridge.pinlocal
 
 import android.content.Context
+import org.harmoniavault.harmonia_mobile.nativebridge.NativeSlotOwner
+import org.harmoniavault.harmonia_mobile.nativebridge.NativeSlotBusyException
 import android.os.Process
 import android.system.Os
 import android.system.OsConstants
@@ -24,6 +26,8 @@ internal class PinNativeSlot(
     private var originalState: ByteArray? = null
     private var expectedStateHash: ByteArray? = null
     @Volatile private var active = false
+    lateinit var owner: NativeSlotOwner
+        private set
 
     init {
         configuration.validate()
@@ -31,6 +35,7 @@ internal class PinNativeSlot(
     }
 
     fun retireOwners() {
+        if (::owner.isInitialized) owner.retire()
         try { retire() } catch (_: Exception) { throw PinLocalException(PinLocalFault.PERSISTENCE) }
     }
 
@@ -44,9 +49,12 @@ internal class PinNativeSlot(
     }
 
     fun acquireOperation() {
-        pathsSafe()
+        owner = try { NativeSlotOwner.acquire(context, configuration.slot, pinNamespace = configuration.namespace) }
+            catch (_: NativeSlotBusyException) { throw PinLocalException(PinLocalFault.BUSY) }
+        try { pathsSafe()
         if (!(directory.exists() || directory.mkdirs()) || !directory.isDirectory) throw PinLocalException(PinLocalFault.PERSISTENCE)
         Os.chmod(directory.path, 0b111000000)
+        NativeSlotOwner.syncDirectory(directory); NativeSlotOwner.syncDirectory(checkNotNull(directory.parentFile))
         try {
             businessLock.acquire()
             Os.chmod(File(directory, "$id.operation.lock").path, 0b110000000)
@@ -56,11 +64,12 @@ internal class PinNativeSlot(
             retireOwners()
             throw if (failure is PinLocalException) failure else PinLocalException(PinLocalFault.PERSISTENCE)
         }
+        } catch (failure: Exception) { owner.close(); throw failure }
     }
 
     private fun requireOperation() {
         if (!active || !businessLock.valid()) throw PinLocalException(PinLocalFault.CLOSED)
-        pathsSafe()
+        owner.read { pathsSafe() }
     }
 
     fun cancel() { active = false; retireOwners() }
@@ -69,8 +78,18 @@ internal class PinNativeSlot(
         active = false
         originalState?.fill(0); originalState = null
         expectedStateHash?.fill(0); expectedStateHash = null
-        try { businessLock.release() } catch (_: Exception) {
-            retireOwners(); throw PinLocalException(PinLocalFault.PERSISTENCE)
+        var failed = false
+        try { businessLock.release() } catch (_: Exception) { failed = true }
+        try { owner.close() } catch (_: Exception) { failed = true }
+        if (failed) { retireOwners(); throw PinLocalException(PinLocalFault.PERSISTENCE) }
+    }
+
+    fun requireNoSystemArtifacts() = owner.read {
+        val root = File(context.noBackupFilesDir, "harmonia")
+        val keys = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        if (keys.containsAlias("harmonia/device-key-wrap/v1") || keys.containsAlias("harmonia/device-key-wrap/v1/setup-integrity/v1") ||
+            listOf("device-keys-v1.gcm", "device-keys-v1.gcm.setup-v1.mac", configuration.slot).any { name -> listOf("", ".bak", ".new").any { File(root, name + it).exists() } }) {
+            throw PinLocalException(PinLocalFault.STATE)
         }
     }
 
@@ -91,16 +110,7 @@ internal class PinNativeSlot(
             if (File(workflow.baseFile.path + ".new").exists()) throw PinLocalException(PinLocalFault.PERSISTENCE)
             return ByteArray(0)
         }
-        return workflow.openRead().use { input ->
-            val output = ByteArrayOutputStream()
-            val buffer = ByteArray(8192)
-            while (output.size() <= PinNativeStateCAS.MAX_STATE) {
-                val count = input.read(buffer, 0, minOf(buffer.size, PinNativeStateCAS.MAX_STATE + 1 - output.size()))
-                if (count < 0) break
-                output.write(buffer, 0, count)
-            }
-            output.toByteArray().also { PinNativeStateCAS.validate(it) }
-        }
+        return NativeSlotOwner.readAtomicBytes(workflow.baseFile, PinNativeStateCAS.MAX_STATE)?.also { PinNativeStateCAS.validate(it) } ?: ByteArray(0)
     }
 
     fun loadWorkflow(): ByteArray {
@@ -112,17 +122,19 @@ internal class PinNativeSlot(
         return packet
     }
 
-    fun saveWorkflow(packet: ByteArray) {
+    fun saveWorkflow(packet: ByteArray) = owner.mutate {
         requireOperation(); PinNativeStateCAS.validate(packet)
         if (packet.isEmpty()) throw PinLocalException(PinLocalFault.STATE)
         val expected = expectedStateHash ?: throw PinLocalException(PinLocalFault.STATE)
         val current = readState()
         try { PinNativeStateCAS.match(expected, current) } finally { current.fill(0) }
         val output = workflow.startWrite()
+        var publishing = false
         try {
             requireOperation()
             output.write(packet); Os.fchmod(output.fd, 0b110000000); output.fd.sync()
             requireOperation()
+            publishing = true
             workflow.finishWrite(output); syncDirectory()
             val readback = readState()
             try {
@@ -130,19 +142,18 @@ internal class PinNativeSlot(
             } finally { readback.fill(0) }
             expectedStateHash?.fill(0); expectedStateHash = PinNativeStateCAS.hash(packet)
         } catch (failure: Exception) {
-            workflow.failWrite(output)
+            if (!publishing) workflow.failWrite(output)
             retireOwners()
             throw if (failure is PinLocalException) failure else PinLocalException(PinLocalFault.PERSISTENCE)
         }
     }
 
     private fun syncDirectory() {
-        val fd = Os.open(directory.path, OsConstants.O_RDONLY, 0)
-        try { Os.fsync(fd) } finally { Os.close(fd) }
+        NativeSlotOwner.syncDirectory(directory)
     }
 
-    override fun clearProtectedWorkflowAndDevice() {
-        requireOperation(); retireOwners()
+    override fun clearProtectedWorkflowAndDevice() = owner.mutate {
+        requireOperation(); retire()
         workflow.delete(); syncDirectory()
         if (listOf("", ".bak", ".new").any { File(workflow.baseFile.path + it).exists() }) throw PinLocalException(PinLocalFault.PERSISTENCE)
         originalState?.fill(0); originalState = null
@@ -150,9 +161,9 @@ internal class PinNativeSlot(
     }
 
     /** 先退役 RAM，再由成熟 store 删除本 slot MAC alias/单包，最后删密封状态。 */
-    fun clearAll() {
-        requireOperation(); retireOwners()
-        val store = PinKeystoreStore(context, configuration, ::retireOwners)
+    fun clearAll() = owner.clear {
+        requireOperation(); retire()
+        val store = PinKeystoreStore(context, configuration, { retire() }, slotOwner = owner)
         store.acquire()
         try { store.deleteLocalPacket(); clearProtectedWorkflowAndDevice() } finally { store.release() }
     }

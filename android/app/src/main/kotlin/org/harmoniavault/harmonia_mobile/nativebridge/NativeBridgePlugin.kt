@@ -25,7 +25,7 @@ import android.util.Base64
 class NativeBridgePlugin internal constructor(
     private val activity: Activity,
     messenger: BinaryMessenger,
-    private val store: ProtectedDeviceStore = ProtectedDeviceStore(activity),
+    store: ProtectedDeviceStore = ProtectedDeviceStore(activity),
     private val workflowFilename: String = "workflow-state-v1.gcm",
     private val additionalCA: ByteArray = ByteArray(0),
     // 仅内部原生构造器的合成故障注入；默认空，通道不能设置，接收的仍只有AES密文。
@@ -33,6 +33,7 @@ class NativeBridgePlugin internal constructor(
     private val beforeWorkflowSave: () -> Unit = {},
     private val productFixture: ProductFixtureConfiguration? = null,
 ) : MethodChannel.MethodCallHandler {
+    private val store = store.withWorkflowSlot(workflowFilename)
     private val channel = MethodChannel(messenger, "org.harmoniavault/native/v1")
     private val worker = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
@@ -43,12 +44,13 @@ class NativeBridgePlugin internal constructor(
     @Volatile private var disposed = false
     @Volatile private var activeWorkflow: VaultWorkflow? = null
     @Volatile private var pendingShortCode: ByteArray? = null
+    @Volatile private var activeSlotOwner: NativeSlotOwner? = null
 
     private val pinOwnerGate = PinOperationOwnerGate<NativePinOperation> { it.cancel() }
     @Volatile private var pendingPIN: PinChannelRequest? = null
     private val pinDispatcher = PinMethodChannelDispatcher(activity, workflowFilename,
         { store.hasArtifacts() || ProtectedWorkflowStore(activity, workflowFilename).hasArtifacts() },
-        { recoveryRegistry.clear() }, { nativeCertificates() }, pinOwnerGate::register)
+        { recoveryRegistry.invalidate() }, { nativeCertificates() }, pinOwnerGate::register)
 
     init {
         check(productFixture == null || additionalCA.contentEquals(productFixture.publicCA()))
@@ -142,7 +144,10 @@ class NativeBridgePlugin internal constructor(
                 }
                 finish(result, code = code)
             } catch (_: Exception) { recoveryRegistry.clear(); finish(result, code = "PIN_BLOCKED") }
-            finally { request.close(); if (pendingPIN === request) pendingPIN = null }
+            finally {
+                request.close(); if (pendingPIN === request) pendingPIN = null
+                recoveryRegistry.clear() // native slot/provider已排空，才同步清钥。
+            }
         }
     }
 
@@ -191,12 +196,31 @@ class NativeBridgePlugin internal constructor(
         }
         if (!acquire(result)) { clearApproval(shortCode); return }
         pendingShortCode = shortCode
+        val owner = try {
+            NativeSlotOwner.acquire(activity, workflowFilename, store.nativeFilename, store.nativeAlias).also {
+                activeSlotOwner = it
+                it.read { check(!disposed && !pinDispatcher.hasArtifacts()) }
+            }
+        } catch (failure: Exception) {
+            try { activeSlotOwner?.close() } catch (_: Exception) { }
+            activeSlotOwner = null
+            clearApproval(shortCode)
+            if (failure !is NativeSlotBusyException) recoveryRegistry.clear()
+            finish(result, code = if (failure is NativeSlotBusyException) "BUSY" else "LOCAL_PROTECTION_STATE"); return
+        }
+        fun releaseOwner(cancelCreate: Boolean = false): Boolean {
+            var confirmed = true
+            if (cancelCreate && create) try { store.cancelPreparedCreate(owner) } catch (_: Exception) { confirmed = false }
+            try { owner.close() } catch (_: Exception) { confirmed = false }
+            if (activeSlotOwner === owner) activeSlotOwner = null
+            return confirmed
+        }
         val cipher: Cipher
         val ciphertext: ByteArray?
         try {
-            if (create) { recoveryRegistry.clear(); cipher = store.prepareCreate(); ciphertext = null }
-            else { val opening = store.prepareOpen(); cipher = opening.cipher; ciphertext = opening.ciphertext }
-        } catch (_: Exception) { recoveryRegistry.clear(); clearApproval(shortCode); finish(result, code = "PROTECTED_KEYS_UNAVAILABLE"); return }
+            if (create) { recoveryRegistry.clear(); cipher = store.prepareCreate(owner); ciphertext = null }
+            else { val opening = store.prepareOpen(owner); cipher = opening.cipher; ciphertext = opening.ciphertext }
+        } catch (_: Exception) { recoveryRegistry.clear(); clearApproval(shortCode); finish(result, code = if (releaseOwner()) "PROTECTED_KEYS_UNAVAILABLE" else "LOCAL_PROTECTION_PERSISTENCE"); return }
         val consumed = AtomicBoolean(false)
         val signal = CancellationSignal()
         cancellation = signal
@@ -209,63 +233,80 @@ class NativeBridgePlugin internal constructor(
             prompt.authenticate(BiometricPrompt.CryptoObject(cipher), signal, activity.mainExecutor,
                 object : BiometricPrompt.AuthenticationCallback() {
                     override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                        if (consumed.compareAndSet(false, true)) { recoveryRegistry.clear(); clearApproval(shortCode); finish(result, code = "AUTH_CANCELLED") }
+                        if (consumed.compareAndSet(false, true)) { recoveryRegistry.clear(); clearApproval(shortCode); finish(result, code = if (releaseOwner(cancelCreate = true)) "AUTH_CANCELLED" else "LOCAL_PROTECTION_PERSISTENCE") }
                     }
                     override fun onAuthenticationFailed() {
-                        if (consumed.compareAndSet(false, true)) { recoveryRegistry.clear(); clearApproval(shortCode); signal.cancel(); finish(result, code = "AUTH_FAILED") }
+                        if (consumed.compareAndSet(false, true)) { recoveryRegistry.clear(); clearApproval(shortCode); signal.cancel(); finish(result, code = if (releaseOwner(cancelCreate = true)) "AUTH_FAILED" else "LOCAL_PROTECTION_PERSISTENCE") }
                     }
                     override fun onAuthenticationSucceeded(authentication: BiometricPrompt.AuthenticationResult) {
                         if (!consumed.compareAndSet(false, true)) return
-                        if (authentication.cryptoObject?.cipher !== cipher || disposed) { recoveryRegistry.clear(); clearApproval(shortCode); finish(result, code = "AUTH_FAILED"); return }
+                        if (authentication.cryptoObject?.cipher !== cipher || disposed) { recoveryRegistry.clear(); clearApproval(shortCode); finish(result, code = if (releaseOwner(cancelCreate = true)) "AUTH_FAILED" else "LOCAL_PROTECTION_PERSISTENCE"); return }
                         worker.execute {
                             var material: ByteArray? = null
                             var device: org.harmoniavault.go.mobilebridge.Device? = null
+                            var response: Any? = null
+                            var failureCode: String? = null
                             try {
                                 // 成功认证后才生成设备钥，取消/失败不会生成可信设备。
                                 if (create) {
                                     device = Mobilebridge.newDevice()
                                     material = device.exportProtectedMaterial()
-                                    store.saveAuthenticated(cipher, material)
+                                    store.saveAuthenticated(cipher, material, owner)
                                     recoveryRegistry.resetForNewDevice()
-                                    finish(result, device.execute("{\"version\":1,\"operation\":\"publicInfo\"}"))
+                                    response = device.execute("{\"version\":1,\"operation\":\"publicInfo\"}")
                                 } else {
                                     check(!disposed)
-                                    material = store.openAuthenticated(cipher, ciphertext!!)
+                                    material = store.openAuthenticated(cipher, ciphertext!!, owner)
                                     device = Mobilebridge.importProtectedMaterial(material)
+                                    store.confirmImportedMaterial(owner)
                                     material.fill(0)
                                     if (workflow) {
-                                        val protected = ProtectedWorkflowStore(activity, workflowFilename, beforeWorkflowSave) { !disposed }
+                                        val protected = ProtectedWorkflowStore(activity, workflowFilename, beforeWorkflowSave, { !disposed }, owner)
                                         val endpoint = JSONObject(command!!).getString("endpoint")
                                         val state = protected.load()
-                                        val writer = object : org.harmoniavault.go.mobilebridge.SealedStateStore {
-                                            override fun saveSealed(packet: ByteArray) {
-                                                beforeWorkflowPacketSave(packet)
-                                                protected.saveSealed(packet)
+                                        val writer = object : org.harmoniavault.go.mobilebridge.AtomicSealedStateStore {
+                                            override fun saveSealed(packet: ByteArray?) {
+                                                val checked = SealedCallbackContract.requirePacket(packet)
+                                                beforeWorkflowPacketSave(checked)
+                                                protected.saveSealed(checked)
+                                            }
+                                            override fun checkSealed(expected: ByteArray?) = protected.checkSealed(expected)
+                                            override fun compareAndSwapSealed(expected: ByteArray?, next: ByteArray?) {
+                                                val checked = SealedCallbackContract.requirePacket(next)
+                                                beforeWorkflowPacketSave(checked)
+                                                protected.compareAndSwapSealed(expected, checked)
                                             }
                                         }
-                                        val flow = device.openWorkflow(endpoint, protected.namespace, state, nativeCertificates(), writer)
+                                        val flow = device.openAtomicWorkflow(endpoint, protected.namespace, state, nativeCertificates(), writer)
                                         activeWorkflow = flow
                                         try {
                                             check(!disposed)
                                             flow.attachRecoveryRegistry(recoveryRegistry)
-                                            val response = when {
+                                            response = when {
                                                 shortCode != null && enrollment -> flow.executeEnrollment(command, shortCode)
                                                 shortCode != null -> flow.executeApproval(command, shortCode)
                                                 else -> flow.execute(command)
                                             }
-                                            if (flow.requiresDeviceDeletion()) { recoveryRegistry.clear(); store.delete(); protected.delete() }
+                                            if (flow.requiresDeviceDeletion()) {
+                                                recoveryRegistry.clear()
+                                                owner.clear { store.delete(owner); protected.delete(); store.finishDeletion(owner) }
+                                            }
                                             check(!disposed)
-                                            finish(result, response)
-                                        } finally { activeWorkflow = null; flow.close(); state.fill(0) }
-                                    } else finish(result, device.execute(command!!))
+                                        } finally { activeWorkflow = null; flow.close(); state.fill(0); protected.closeCaptured() }
+                                    } else response = device.execute(command!!)
                                 }
-                            } catch (_: Exception) { recoveryRegistry.clear(); finish(result, code = "GO_OR_KEYSTORE_REJECTED") }
-                            finally { clearApproval(shortCode); material?.fill(0); device?.close() }
+                            } catch (_: Exception) { owner.retire(); recoveryRegistry.clear(); failureCode = "GO_OR_KEYSTORE_REJECTED" }
+                            finally {
+                                clearApproval(shortCode); material?.fill(0)
+                                try { device?.close() } catch (_: Exception) { failureCode = "GO_OR_KEYSTORE_REJECTED" }
+                                if (!releaseOwner()) failureCode = "LOCAL_PROTECTION_PERSISTENCE"
+                            }
+                            finish(result, response, failureCode)
                         }
                     }
                 })
         } catch (_: Exception) {
-            if (consumed.compareAndSet(false, true)) { recoveryRegistry.clear(); clearApproval(shortCode); finish(result, code = "AUTH_UNAVAILABLE") }
+            if (consumed.compareAndSet(false, true)) { recoveryRegistry.clear(); clearApproval(shortCode); finish(result, code = if (releaseOwner(cancelCreate = true)) "AUTH_UNAVAILABLE" else "LOCAL_PROTECTION_PERSISTENCE") }
         }
     }
 
@@ -290,10 +331,13 @@ class NativeBridgePlugin internal constructor(
         // 所有owner分别尝试关闭；某一取消失败也不能阻止其它输入/通道退役。
         var failed = false
         try { pinOwnerGate.retire { disposed = true } } catch (_: Exception) { failed = true }
-        try { recoveryRegistry.close() } catch (_: Exception) { failed = true }
+        try { activeWorkflow?.invalidate() } catch (_: Exception) { failed = true }
+        try { recoveryRegistry.invalidate() } catch (_: Exception) { failed = true }
+        activeSlotOwner?.retire() // 先令 writer 失效；Go Close 与 FileLock 排空在 worker finally，不持 commit gate。
+        // Go同步Close只能在worker排空后执行，不能占主线程或native保存gate。
+        try { worker.execute { recoveryRegistry.close() } } catch (_: Exception) { failed = true }
         pendingPIN?.close()
         clearApproval(pendingShortCode)
-        try { activeWorkflow?.cancel() } catch (_: Exception) { failed = true }
         try { cancellation?.cancel() } catch (_: Exception) { failed = true }
         channel.setMethodCallHandler(null)
         worker.shutdown()

@@ -22,6 +22,7 @@ internal class ProtectedDeviceStore(
     private val context: Context,
     private val alias: String = "harmonia/device-key-wrap/v1",
     private val filename: String = "device-keys-v1.gcm",
+    private val workflowSlot: String = "workflow-state-v1.gcm",
 ) {
     companion object {
         const val AUTHENTICATORS = BiometricManager.Authenticators.BIOMETRIC_STRONG or
@@ -33,6 +34,7 @@ internal class ProtectedDeviceStore(
         private const val FILE_BYTES = 8 + IV_BYTES + SEALED_BYTES
     }
 
+    private val setup = NativeDeviceSetupIntent(context, workflowSlot, filename, alias)
     private val directory = File(context.noBackupFilesDir, "harmonia")
     private val atomicFile = AtomicFile(File(directory, filename))
     private val aad = (context.packageName + "\u0000harmonia/device-material/v1\u0000" + filename)
@@ -51,21 +53,22 @@ internal class ProtectedDeviceStore(
     /** 残留alias/.new也属于既有系统mode，不能为PIN setup当作不存在。 */
     fun hasArtifacts(): Boolean {
         val keys = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        return exists() || File(atomicFile.baseFile.path + ".new").exists() || keys.containsAlias(alias)
+        return exists() || File(atomicFile.baseFile.path + ".new").exists() || keys.containsAlias(alias) || setup.hasArtifacts()
     }
 
     private fun requireSupported() {
         check(supported()) { "system strong authentication unavailable" }
     }
 
-    private fun loadKey(create: Boolean): SecretKey {
+    private fun loadKey(create: Boolean, selectedAlias: String): SecretKey {
         requireSupported()
         val keystore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        var key = keystore.getKey(alias, null) as? SecretKey
-        if (key == null && create) {
+        var key = keystore.getKey(selectedAlias, null) as? SecretKey
+        if (create) {
+            check(key == null && !keystore.containsAlias(selectedAlias)) { "unknown wrapping alias exists" }
             val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
             generator.init(
-                KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+                KeyGenParameterSpec.Builder(selectedAlias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
                     .setKeySize(256)
                     .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                     .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
@@ -87,47 +90,43 @@ internal class ProtectedDeviceStore(
         return key
     }
 
-    fun prepareCreate(): Cipher {
+    internal fun withWorkflowSlot(slot: String) = ProtectedDeviceStore(context, alias, filename, slot)
+    internal val nativeFilename get() = filename
+    internal val nativeAlias get() = alias
+    private fun requireOwner(owner: NativeSlotOwner?) = owner ?: error("captured slot owner required")
+
+    fun prepareCreate(owner: NativeSlotOwner? = null): Cipher = requireOwner(owner).mutate {
         requireSupported()
-        check(!exists()) { "device keys already exist" }
-        return Cipher.getInstance("AES/GCM/NoPadding").apply {
-            init(Cipher.ENCRYPT_MODE, loadKey(create = true))
+        val selectedAlias = setup.prepareNew(requireOwner(owner))
+        Cipher.getInstance("AES/GCM/NoPadding").apply {
+            init(Cipher.ENCRYPT_MODE, loadKey(create = true, selectedAlias = selectedAlias))
         }
     }
 
     data class Opening(val cipher: Cipher, val ciphertext: ByteArray)
 
-    fun prepareOpen(): Opening {
+    fun prepareOpen(owner: NativeSlotOwner? = null): Opening = requireOwner(owner).read {
         requireSupported()
-        val bytes = atomicFile.openRead().use { input ->
-            val data = ByteArray(FILE_BYTES)
-            var offset = 0
-            while (offset < data.size) {
-                val count = input.read(data, offset, data.size - offset)
-                check(count > 0) { "invalid protected device file" }
-                offset += count
-            }
-            check(input.read() == -1) { "invalid protected device file size" }
-            data
-        }
+        val bytes = NativeSlotOwner.readAtomicBytes(atomicFile.baseFile, FILE_BYTES) ?: error("device material absent")
+        check(bytes.size == FILE_BYTES)
         check(bytes.copyOfRange(0, HEADER.size).contentEquals(HEADER)) { "invalid protected device file version" }
         val iv = bytes.copyOfRange(HEADER.size, HEADER.size + IV_BYTES)
         val ciphertext = bytes.copyOfRange(HEADER.size + IV_BYTES, bytes.size)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply {
-            init(Cipher.DECRYPT_MODE, loadKey(create = false), GCMParameterSpec(128, iv))
+            init(Cipher.DECRYPT_MODE, loadKey(create = false, selectedAlias = setup.aliasForOpening(bytes)), GCMParameterSpec(128, iv))
         }
-        return Opening(cipher, ciphertext)
+        Opening(cipher, ciphertext)
     }
 
-    fun openAuthenticated(cipher: Cipher, ciphertext: ByteArray): ByteArray {
+    fun openAuthenticated(cipher: Cipher, ciphertext: ByteArray, owner: NativeSlotOwner? = null): ByteArray = requireOwner(owner).read {
         cipher.updateAAD(aad)
         val material = cipher.doFinal(ciphertext)
         check(material.size == MATERIAL_BYTES) { "invalid device material size" }
-        return material
+        material
     }
 
     /** cipher 必须来自成功认证的同一个 CryptoObject；调用方不得提供明文持久化接口。 */
-    fun saveAuthenticated(cipher: Cipher, material: ByteArray) {
+    fun saveAuthenticated(cipher: Cipher, material: ByteArray, owner: NativeSlotOwner? = null) = requireOwner(owner).mutate {
         check(material.size == MATERIAL_BYTES && !exists()) { "invalid device creation state" }
         // 每次认证 key 的 AAD 也属于受保护 operation，必须在认证成功后送入。
         cipher.updateAAD(aad)
@@ -136,25 +135,39 @@ internal class ProtectedDeviceStore(
         check(directory.exists() || directory.mkdirs()) { "protected directory unavailable" }
         Os.chmod(directory.path, 0b111000000)
         val output = atomicFile.startWrite()
+        var publishing = false
         try {
             output.write(HEADER)
             output.write(cipher.iv)
             output.write(ciphertext)
             Os.fchmod(output.fd, 0b110000000)
             output.fd.sync()
+            publishing = true
             atomicFile.finishWrite(output)
+            NativeSlotOwner.syncDirectory(directory)
+            val readback = NativeSlotOwner.readAtomicBytes(atomicFile.baseFile, FILE_BYTES) ?: error("device readback absent")
+            try { check(readback.contentEquals(HEADER + cipher.iv + ciphertext)) }
+            finally { readback.fill(0) }
+            setup.bindMaterial(requireOwner(owner), HEADER + cipher.iv + ciphertext)
         } catch (failure: Exception) {
-            atomicFile.failWrite(output)
+            if (!publishing) atomicFile.failWrite(output)
             throw failure
         }
     }
-    fun delete() {
-        // 先销毁包封key，任何遗留文件不再可解包；失败必须报告，不能假报退出。
-        val keystore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        if (keystore.containsAlias(alias)) keystore.deleteEntry(alias)
+    fun delete(owner: NativeSlotOwner? = null) = requireOwner(owner).mutate {
+        // 先发布精确删除意图，再销毁本locator所指包封key；中断不能认领新identity。
+        setup.beginDeletion(requireOwner(owner))
         atomicFile.delete()
-        check(!keystore.containsAlias(alias) && !exists() &&
+        NativeSlotOwner.syncDirectory(directory)
+        check(!exists() &&
             !File(atomicFile.baseFile.path + ".new").exists())
     }
+
+    fun confirmImportedMaterial(owner: NativeSlotOwner) {
+        val packet = owner.read { NativeSlotOwner.readAtomicBytes(atomicFile.baseFile, FILE_BYTES) ?: error("device packet absent") }
+        try { setup.bindMaterial(owner, packet) } finally { packet.fill(0) }
+    }
+    fun cancelPreparedCreate(owner: NativeSlotOwner) = setup.cancelPrepared(owner)
+    fun finishDeletion(owner: NativeSlotOwner) = setup.finishDeletion(owner)
 
 }

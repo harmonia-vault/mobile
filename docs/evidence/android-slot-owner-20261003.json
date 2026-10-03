@@ -1,0 +1,262 @@
+{
+  "version": 1,
+  "dateUTC": "2026-10-03",
+  "scope": "Android all-writer native slot owner, finite layered validation; no Flutter/cloud/DAG capability",
+  "sourceBases": {
+    "core-go": {
+      "commit": "6d8178ae3116e6eb9dc4c1a9197c885c6a7687b1",
+      "baselineFileCount": 386,
+      "otherTrackedSourceChanges": []
+    },
+    "mobile": {
+      "commit": "ecbbc6212c14ca4335038a14abb66900d7217373",
+      "baselineFileCount": 182,
+      "otherTrackedSourceChanges": []
+    }
+  },
+  "platform": {
+    "runtimeAPI": 34,
+    "runtimeArchitecture": "arm64-v8a",
+    "compileSDK": 36,
+    "targetSDK": 34,
+    "minSDK": 30,
+    "Go": "1.26.4",
+    "Kotlin": "2.4.0",
+    "Java": "temurin-17.0.16+8",
+    "NDK": "28.2.13676358",
+    "gomobile": "v0.0.0-20260908204917-8b95e45f8d3e"
+  },
+  "compiledCandidate": {
+    "freezeSHA256": "3babea0b0beb0b8ffd3eaab62e635a6c894ac2db79f76c6c3e9d7feb35279c14",
+    "sourceCount": 26,
+    "sources": {
+      "core-go/mobilebridge/ATOMIC_NATIVE.md": {
+        "SHA256": "29950e1f8efa5e4aa979469b36a5a864956fceaa6e59cb14683d4e5e6e1989d9",
+        "gitBlob": "5a3f03b134460af75030b53dd5be8a19c6667ebb"
+      },
+      "core-go/mobilebridge/workflow_atomic_native.go": {
+        "SHA256": "c99539896a91676aa80fb41848a3dc4446e6dfd914774c65fbb470d32aa95a8f",
+        "gitBlob": "80dded97d565a92795370ece6bb5962fc60082fd"
+      },
+      "core-go/mobilebridge/workflow_atomic_native_test.go": {
+        "SHA256": "75a574dbc87fc854c14dfee66dad566634a2cf43691a806b57086c26e01e24a5",
+        "gitBlob": "c09d7fcef0575ce4827ca0db814ddeebeee267bc"
+      },
+      "core-go/test/nativeatomicfixture/fixture.go": {
+        "SHA256": "22cb3b76887b54a0f0801698ba14e77ece9ccb4dc3ef00d675b5d2448c2c29dd",
+        "gitBlob": "b0bfb6f8ccf022b319e5826c279fdf718a5570e9"
+      },
+      "mobile/android/app/src/androidTest/kotlin/org/harmoniavault/harmonia_mobile/nativebridge/NativeSlotOwnerAndroidTest.kt": {
+        "SHA256": "23a6687c21c5a8a23d551117ab0b19ac00004f64278643867da9e5bc86781d9c",
+        "gitBlob": "84052692e999a0178a943c0892586229fa455a7f"
+      },
+      "mobile/android/app/src/main/kotlin/org/harmoniavault/harmonia_mobile/nativebridge/FrameworkParentDirectoryPolicy.kt": {
+        "SHA256": "8ed922462b16af4a28178879706dd52655be32663f8ce92f65bb0c3ded19482c",
+        "gitBlob": "1861f6892a9d9e7f7a9d90706e15faea299b8498"
+      },
+      "mobile/android/app/src/main/kotlin/org/harmoniavault/harmonia_mobile/nativebridge/NativeBridgePlugin.kt": {
+        "SHA256": "0dbb2e16bc9e49d613ef5a8963a878a9f8e48c0953fbbef8fdb82464b24330f7",
+        "gitBlob": "fa859c405a7cb44cb3c7302bb00e7db04bf62740"
+      },
+      "mobile/android/app/src/main/kotlin/org/harmoniavault/harmonia_mobile/nativebridge/NativeDeviceSetupIntent.kt": {
+        "SHA256": "d522eeace954f3502226fcadc7f01ac2f003dbf3160f7355c82b464d1e660370",
+        "gitBlob": "63f6b764dab5d7b3d532b32bae1e05a00133ff0d"
+      },
+      "mobile/android/app/src/main/kotlin/org/harmoniavault/harmonia_mobile/nativebridge/NativeSlotOwner.kt": {
+        "SHA256": "22751a8a3b5a516b411d8e15956091ce26d566fef72a259413c3e6cf3f211b08",
+        "gitBlob": "739411a24b3ec625bae888a0ff67761dac447688"
+      },
+      "mobile/android/app/src/main/kotlin/org/harmoniavault/harmonia_mobile/nativebridge/ProtectedDeviceStore.kt": {
+        "SHA256": "4def93c9c62ffa6d264043e0acb53ad5fa18c413d9b40dacf0e27d28932498a4",
+        "gitBlob": "4a4411b477cbb2be47dd973ba35a53fe419ef93f"
+      },
+      "mobile/android/app/src/main/kotlin/org/harmoniavault/harmonia_mobile/nativebridge/ProtectedWorkflowStore.kt": {
+        "SHA256": "3870ce3d15d7edbfb1d62cea981634ffbfc9eab752f848db5431c60db138889d",
+        "gitBlob": "85373dcbb64f8367a1d80d977e1af557018dcf04"
+      },
+      "mobile/android/app/src/main/kotlin/org/harmoniavault/harmonia_mobile/nativebridge/SealedCallbackContract.kt": {
+        "SHA256": "95f3a66587adcfe0c26c0c1a22ebd35b0623bf0a23b48f22e477e5d3ac6f3523",
+        "gitBlob": "d45e6c46309380877de2dc4c596701f22b9ffc2c"
+      },
+      "mobile/android/app/src/main/kotlin/org/harmoniavault/harmonia_mobile/nativebridge/SlotSnapshotLease.kt": {
+        "SHA256": "65690a0820d05def7fd3fb260c54ab4f92bb2239ba5334f684be67b73dd1d213",
+        "gitBlob": "d5aa80d1e3e867e90220e21dc73ed3a1bb1c64d4"
+      },
+      "mobile/android/app/src/main/kotlin/org/harmoniavault/harmonia_mobile/nativebridge/pinlocal/LocalPinProvider.kt": {
+        "SHA256": "b02e08368d057abdc16b62be1f663fa35b72124419f36b53baaab713ee05d03a",
+        "gitBlob": "b133220aabd5d4f9ed5a6e2adfac103d36cb2800"
+      },
+      "mobile/android/app/src/main/kotlin/org/harmoniavault/harmonia_mobile/nativebridge/pinlocal/NativePinCoreAdapter.kt": {
+        "SHA256": "55512a5464e031f453dc63e12f9c90b071b4c14e580a96d42cdcb52edb333336",
+        "gitBlob": "02feb7a081829b01223fb4e6119257356e2b9cc4"
+      },
+      "mobile/android/app/src/main/kotlin/org/harmoniavault/harmonia_mobile/nativebridge/pinlocal/PinKeystoreStore.kt": {
+        "SHA256": "7c66e040d67d3de18009c25310e5ca0d957deb5298b514c63a25e253bfdbfadf",
+        "gitBlob": "622ea0351960301d6472ae7169f1d30562d9311c"
+      },
+      "mobile/android/app/src/main/kotlin/org/harmoniavault/harmonia_mobile/nativebridge/pinlocal/PinMethodChannelDispatcher.kt": {
+        "SHA256": "2bbca05ce1de10bfd715ca2662c61f7724e9478a2499e40d7d8c1bc53469051d",
+        "gitBlob": "56bdec7b1eca308ca883c78caeb1143962ddb692"
+      },
+      "mobile/android/app/src/main/kotlin/org/harmoniavault/harmonia_mobile/nativebridge/pinlocal/PinNativeSlot.kt": {
+        "SHA256": "888f4c22eb7101e68798313902e25190012bd88e4b051597c4574796b836b023",
+        "gitBlob": "9c248dc46d3851756868cf33dcc35b18064ffae2"
+      },
+      "mobile/android/app/src/test/kotlin/org/harmoniavault/harmonia_mobile/nativebridge/SlotSnapshotLeaseHostTest.kt": {
+        "SHA256": "bcd872d9fee787c98eb97d191358e60ffa5aa0ef3786cf017c364bd3489f1436",
+        "gitBlob": "50e9356f5a419b2af8e4c92198a2e7533827c44f"
+      },
+      "mobile/docs/ANDROID_DEVICE_SETUP.md": {
+        "SHA256": "0bd612077bbceef5e3e9dd808009443d584d63c1f1e84643c0b62bfb5c4fcec8",
+        "gitBlob": "8811b18288ca95a44be08436b3d62810ea43f220"
+      },
+      "mobile/docs/ANDROID_SLOT_OWNER.md": {
+        "SHA256": "3b5cddf6f5dbab5301ac3516c592196569f79963ebb525fd9b50f04aa717d763",
+        "gitBlob": "de83e5521e7cecd639a558cc4f284b5396cce1ab"
+      },
+      "mobile/tool/native-slot-atomic-jni-run.py": {
+        "SHA256": "5f72d3cdc14e9540d02edfb9c0fa329f110d4fab0541463bea9eedc9ede56ffe",
+        "gitBlob": "341fab702e5b62c61d052bee5a196aef88142661"
+      },
+      "mobile/tool/native-slot-owner-compile.py": {
+        "SHA256": "b5cc4add1c8f6a4977902cf72192f25989e70e05a54da6ae7472cf2bce383408",
+        "gitBlob": "128ea80415351ac58c7d8bbdf8d7fccf3e2bb72d"
+      },
+      "mobile/tool/native-slot-owner-fixture/SlotOwnerFixtureActivity.kt": {
+        "SHA256": "91421b9faf61559af4fea4f48e6faa1e83f54583fe14fbdc93fb62054f9ab66d",
+        "gitBlob": "49a5e51bb0737bf70a82e78fe26732f955c0e7ef"
+      },
+      "mobile/tool/native-slot-owner-fixture/SlotOwnerProbeService.kt": {
+        "SHA256": "bedf21aa4fb51b84b639ad3fae99f7de93dcc5759f39ade3bd6b3de548f08374",
+        "gitBlob": "fecb3f3613e858687018c82f0a6365f956bc0da4"
+      },
+      "mobile/tool/native-slot-owner-test.py": {
+        "SHA256": "3399ec1f85bdec224aed806e001bbe0ed0610a5ccb27d6f4a859bf18611bc437",
+        "gitBlob": "548e49d57c80a1be4ea76f855aba42c0ed5a0859"
+      }
+    },
+    "runManifestSHA256": "0688cc7fe6d0a6d28f46149611dc5284e2b4f63f87038c28154ddc18676d11c3"
+  },
+  "AAR": {
+    "harmonia-slot-owner-v2.aar": "c50ea0267af5392350b031e756f591f14bf70d390fd8ff79e6a7fe3a9f62a9fe",
+    "harmonia-slot-owner-jni-test-v2.aar": "d8496854156bc6368a0ddb289155c99f0d8c518577615c8dd76a013a9bca3f3e"
+  },
+  "APK": {
+    "app-debug.apk": "02ac358013a1d47925d64013e57e545c33082789782fb211c765d70b3ef03cd2",
+    "app-debug-androidTest.apk": "84bf5981542f399f96eeee39fee697e98c3288333290e541a69089980504e435"
+  },
+  "verification": {
+    "KotlinCompileExit": 0,
+    "compileSeconds": 5.205,
+    "hostExit": 0,
+    "hostCases": 10,
+    "hostSeconds": 0.094,
+    "APKBuildStatus": "PASS",
+    "APKBuildSeconds": 11.296,
+    "compileSDK": 36,
+    "minSDK": 30,
+    "targetSDK": 34
+  },
+  "historicalActual": [
+    {
+      "case": "APK-v4-six",
+      "status": "FAIL",
+      "tests": 6,
+      "failures": 6,
+      "JUnitSeconds": 1.472,
+      "freezeSHA256": "29cf765c994d672a81889893303aab233560f0696321dc605300c64892576bf7",
+      "rawHashes": {
+        "instrumentation.log": "fb0db8d98c49eb370bf57fff4bda3f41be269d943689ccaa167ce1987cacff35",
+        "runtime-result.json": "22e26b6eb6eb1c20e050bef530cdf10521dcd38529a70faf759b7be2ce2c19ea"
+      },
+      "cleanup": {
+        "officialClearExit": 0,
+        "SDKFinallyNoSecure": true,
+        "packagesCleaned": true,
+        "baselinePackageSetPreserved": true
+      }
+    },
+    {
+      "case": "metadata-probe",
+      "status": "PASS",
+      "tests": 1,
+      "JUnitSeconds": 0.308,
+      "parentMode": "0771",
+      "uidGidOwn": true,
+      "pathFDConsistent": true,
+      "evidenceSHA256": "e3ff689bbd15bdcad17e272c4c7b079251c6b00cef2a6222d2ef2bc81b70e8c9"
+    },
+    {
+      "case": "APK-v5-six",
+      "status": "FAIL",
+      "tests": 6,
+      "passed": 4,
+      "failures": 2,
+      "JUnitSeconds": 5.06,
+      "cases": {
+        "changedCapturedBundleRejectsStaleDeleteAndSave": "PASS",
+        "realGoProxyCheckAndCASThenOrdinarySave": "FAIL",
+        "cancellationDrainsBeforeNewOwnerAndPermanentLockSurvives": "PASS",
+        "ownedCreateCancelAndProcessDeathCanResume": "PASS",
+        "pinLimiterAndWorkflowShareOwnerThroughForget": "PASS",
+        "typedOpenerRetainsRealJNIAtomicInterface": "FAIL"
+      },
+      "freezeSHA256": "4f94ce12c94716e551b37760d9bfa72b071ae81ff973c72d3b2b0cda4a690f78",
+      "rawHashes": {
+        "instrumentation.log": "41f179da0759d60b8a8eccbcdd48b9b12a6b542413e6018aaff8efd07c94576c",
+        "runtime-result.json": "86e66cecec48d630f8744f234927bbf04a33313c53fcd07bea66405f9f2a104d",
+        "run-manifest.json": "2e09a45383a0ebcd546a4b72a657529c0393a053c7c0708cacd623082460a13b",
+        "manifest.json": "5cda523f6d8bcd76118c915d46edbf68f4ee013da1a2a91496d7cb6059e87140"
+      },
+      "credentialInputActions": 1,
+      "cancelInputActions": 1,
+      "actualCancelCallbackVerified": true,
+      "actualCryptoObjectSuccessVerified": true,
+      "cleanup": {
+        "SDKBaselineNoSecure": true,
+        "SDKSecureVerified": true,
+        "officialClearExit": 0,
+        "SDKFinallyNoSecure": true,
+        "packagesCleaned": true,
+        "baselinePackageSetPreserved": true
+      }
+    }
+  ],
+  "latestActual": {
+    "case": "APK-v6-two-JNI",
+    "status": "PASS",
+    "selectedMethods": [
+      "realGoProxyCheckAndCASThenOrdinarySave",
+      "typedOpenerRetainsRealJNIAtomicInterface"
+    ],
+    "cases": {
+      "realGoProxyCheckAndCASThenOrdinarySave": "PASS",
+      "typedOpenerRetainsRealJNIAtomicInterface": "PASS"
+    },
+    "JUnitSecondsPerCase": 0.04,
+    "hostSeconds": 0.937,
+    "systemCredentialSetup": false,
+    "credentialInputs": 0,
+    "credentialCancellations": 0,
+    "rawHashes": {
+      "realGoProxyCheckAndCASThenOrdinarySave.log": "cf8dd751ef6053182b2a487e1e070427e6286d68564b77011ca063a18123fc33",
+      "typedOpenerRetainsRealJNIAtomicInterface.log": "a66344050f4a79c0bf326ed21e1f3562754051acc8a6d045dde3a788f34af3c1",
+      "jni-runtime-result.json": "46185fb80e6d72fd3e8eb2f72b10f4b8061f32cb840c9e14745a9d8352d2d9b3"
+    },
+    "cleanup": {
+      "SDKBaselineNoSecure": true,
+      "SDKFinallyNoSecure": true,
+      "packagesCleaned": true,
+      "baselinePackageSetPreserved": true
+    },
+    "cleanupBlocker": false
+  },
+  "boundaries": [
+    "No single APK-v6 six-case PASS claim",
+    "No product Flutter/cloud flow rerun",
+    "No DAG/B1/Recovery ABI or UI capability enabled",
+    "Per-operation token is separate from future stable cross-auth PlatformEpoch",
+    "PIN case validates storage ownership only, not PIN unlock/KDF"
+  ],
+  "privacy": "Synthetic inputs only. No PIN/private keys/credentials/state contents, absolute host paths or host PIDs in this public evidence."
+}

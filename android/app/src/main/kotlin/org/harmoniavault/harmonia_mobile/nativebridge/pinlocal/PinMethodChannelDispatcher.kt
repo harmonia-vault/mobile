@@ -85,7 +85,7 @@ internal class PinMethodChannelDispatcher(
             var upgrade = false
             var delay = 0
             if (hasPIN) {
-                val durable = PinKeystoreStore(context, config, retireOwners)
+                val durable = PinKeystoreStore(context, config, slot::retireOwners, slotOwner = slot.owner)
                 durable.acquire()
                 try {
                     val snapshot = durable.readProtected()
