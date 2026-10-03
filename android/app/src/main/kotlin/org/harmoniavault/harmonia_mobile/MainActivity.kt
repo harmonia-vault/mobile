@@ -6,32 +6,17 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
-import android.os.SystemClock
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import org.harmoniavault.harmonia_mobile.nativebridge.NativeBridgePlugin
-import org.harmoniavault.harmonia_mobile.nativebridge.NativeSlotLifecycle
-import org.harmoniavault.harmonia_mobile.nativebridge.NativeSlotTimer
 import org.harmoniavault.harmonia_mobile.nativebridge.ProductFixtureConfiguration
 
 class MainActivity : FlutterActivity() {
     private var nativeBridge: NativeBridgePlugin? = null
-    // A 分片仅采纳 SDK 生命周期；尚未连接生产认证或任何 DAG 业务入口。
-    private val dagHandler = Handler(Looper.getMainLooper())
-    private val dagLifecycle = NativeSlotLifecycle(
-        clockMillis = { SystemClock.elapsedRealtime() },
-        schedule = { delay, action ->
-            val runnable = Runnable { action() }
-            check(dagHandler.postDelayed(runnable, delay))
-            NativeSlotTimer { dagHandler.removeCallbacks(runnable) }
-        },
-    )
     private var screenReceiverRegistered = false
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == Intent.ACTION_SCREEN_OFF) dagLifecycle.onScreenOff()
+            if (intent?.action == Intent.ACTION_SCREEN_OFF) nativeBridge?.onHostScreenOff()
         }
     }
 
@@ -45,12 +30,12 @@ class MainActivity : FlutterActivity() {
     override fun onResume() {
         super.onResume()
         val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
-        dagLifecycle.onResumed(!keyguard.isDeviceLocked)
+        nativeBridge?.onHostResumed(!keyguard.isDeviceLocked)
     }
 
-    override fun onPause() { dagLifecycle.onPaused(); super.onPause() }
-    override fun onStop() { dagLifecycle.onStopped(); super.onStop() }
-    override fun onUserLeaveHint() { dagLifecycle.onUserLeaveHint(); super.onUserLeaveHint() }
+    override fun onPause() { nativeBridge?.onHostPaused(); super.onPause() }
+    override fun onStop() { nativeBridge?.onHostStopped(); super.onStop() }
+    override fun onUserLeaveHint() { nativeBridge?.onHostUserLeaveHint(); super.onUserLeaveHint() }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -63,7 +48,6 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
-        dagLifecycle.dispose()
         if (screenReceiverRegistered) { unregisterReceiver(screenReceiver); screenReceiverRegistered = false }
         nativeBridge?.dispose()
         nativeBridge = null

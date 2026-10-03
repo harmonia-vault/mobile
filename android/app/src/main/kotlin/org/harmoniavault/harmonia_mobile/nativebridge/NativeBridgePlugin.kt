@@ -52,6 +52,16 @@ class NativeBridgePlugin internal constructor(
         { store.hasArtifacts() || ProtectedWorkflowStore(activity, workflowFilename).hasArtifacts() },
         { recoveryRegistry.invalidate() }, { nativeCertificates() }, pinOwnerGate::register)
 
+    // 封闭 native-only DAG consumer：不注册MethodChannel，普通/Flutter cap不变。
+    private val dagDispatcher = NativeDAGRecoveryDispatcher(activity, this.store, workflowFilename,
+        ::nativeCertificates, ::acceptsEndpoint, { !disposed && !busy.get() }, pinDispatcher::hasArtifacts)
+    internal fun executeNativeDAG(command: String, code: ByteArray, completion: NativeDAGRecoveryDispatcher.Completion) = dagDispatcher.execute(command, code, completion)
+    internal fun onHostResumed(deviceUnlocked: Boolean) = dagDispatcher.onResumed(deviceUnlocked)
+    internal fun onHostPaused() = dagDispatcher.onPaused()
+    internal fun onHostStopped() = dagDispatcher.onStopped()
+    internal fun onHostUserLeaveHint() = dagDispatcher.onUserLeaveHint()
+    internal fun onHostScreenOff() = dagDispatcher.onScreenOff()
+
     init {
         check(productFixture == null || additionalCA.contentEquals(productFixture.publicCA()))
         channel.setMethodCallHandler(this)
@@ -85,6 +95,7 @@ class NativeBridgePlugin internal constructor(
             }
             "createDevice" -> {
                 if (call.arguments != null) { invalid(result); return }
+                dagDispatcher.invalidate()
                 authenticated(result, create = true, command = null)
             }
             "workflowProfile" -> {
@@ -107,6 +118,8 @@ class NativeBridgePlugin internal constructor(
                 val command = call.arguments as? String
                 if (command == null || command.toByteArray(Charsets.UTF_8).size > 32768) { invalid(result); return }
                 if (!acceptsWorkflowEndpoint(command)) { invalid(result); return }
+                // 仅本地RAM撤销；真正Logout仍经原Go严格DTO与系统认证。
+                try { if (JSONObject(command).optString("operation") == "logout") dagDispatcher.invalidate() } catch (_: Exception) { }
                 authenticated(result, create = false, command = command, workflow = true)
             }
             "executeUnlocked" -> {
@@ -122,6 +135,8 @@ class NativeBridgePlugin internal constructor(
         val request = try { PinChannelRequest.parse(call.method, call.arguments) }
             catch (_: Exception) { invalid(result); return }
         if (!acceptsEndpoint(request.endpoint)) { request.close(); invalid(result); return }
+        // PIN业务不接DAG owner，任一模式切换/forget前先撤销本槽DAG RAM。
+        dagDispatcher.invalidate()
         if (!acquire(result)) { request.close(); return }
         pendingPIN = request
         worker.execute {
@@ -160,7 +175,7 @@ class NativeBridgePlugin internal constructor(
 
     private fun invalid(result: MethodChannel.Result) = result.error("INVALID_COMMAND", "原生业务请求不符合协议。", null)
     private fun acquire(result: MethodChannel.Result): Boolean {
-        if (!busy.compareAndSet(false, true)) { result.error("BUSY", "已有原生业务操作正在进行。", null); return false }
+        if (dagDispatcher.isBusy() || !busy.compareAndSet(false, true)) { result.error("BUSY", "已有原生业务操作正在进行。", null); return false }
         return true
     }
     private fun finish(result: MethodChannel.Result, value: Any? = null, code: String? = null) {
@@ -187,8 +202,9 @@ class NativeBridgePlugin internal constructor(
         val hasPIN = try { pinDispatcher.hasArtifacts() } catch (_: Exception) {
             clearApproval(shortCode); recoveryRegistry.clear(); result.error("LOCAL_PROTECTION_STATE", "本机保护状态不可用。", null); return
         }
-        if (hasPIN) { clearApproval(shortCode); recoveryRegistry.clear(); result.error("PIN_UPGRADE_REQUIRED", "当前为PIN保护模式；不能自动切换系统provider。", null); return }
+        if (hasPIN) { dagDispatcher.invalidate(); clearApproval(shortCode); recoveryRegistry.clear(); result.error("PIN_UPGRADE_REQUIRED", "当前为PIN保护模式；不能自动切换系统provider。", null); return }
         if (!store.supported() || Build.VERSION.SDK_INT < 30) {
+            dagDispatcher.invalidate()
             clearApproval(shortCode)
             recoveryRegistry.clear()
             result.error("AUTH_UNAVAILABLE", "需要系统设备密码或强生物认证，当前不能生成或解包设备钥匙。", null)
@@ -233,14 +249,14 @@ class NativeBridgePlugin internal constructor(
             prompt.authenticate(BiometricPrompt.CryptoObject(cipher), signal, activity.mainExecutor,
                 object : BiometricPrompt.AuthenticationCallback() {
                     override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                        if (consumed.compareAndSet(false, true)) { recoveryRegistry.clear(); clearApproval(shortCode); finish(result, code = if (releaseOwner(cancelCreate = true)) "AUTH_CANCELLED" else "LOCAL_PROTECTION_PERSISTENCE") }
+                        if (consumed.compareAndSet(false, true)) { dagDispatcher.invalidate(); recoveryRegistry.clear(); clearApproval(shortCode); finish(result, code = if (releaseOwner(cancelCreate = true)) "AUTH_CANCELLED" else "LOCAL_PROTECTION_PERSISTENCE") }
                     }
                     override fun onAuthenticationFailed() {
-                        if (consumed.compareAndSet(false, true)) { recoveryRegistry.clear(); clearApproval(shortCode); signal.cancel(); finish(result, code = if (releaseOwner(cancelCreate = true)) "AUTH_FAILED" else "LOCAL_PROTECTION_PERSISTENCE") }
+                        if (consumed.compareAndSet(false, true)) { dagDispatcher.invalidate(); recoveryRegistry.clear(); clearApproval(shortCode); signal.cancel(); finish(result, code = if (releaseOwner(cancelCreate = true)) "AUTH_FAILED" else "LOCAL_PROTECTION_PERSISTENCE") }
                     }
                     override fun onAuthenticationSucceeded(authentication: BiometricPrompt.AuthenticationResult) {
                         if (!consumed.compareAndSet(false, true)) return
-                        if (authentication.cryptoObject?.cipher !== cipher || disposed) { recoveryRegistry.clear(); clearApproval(shortCode); finish(result, code = if (releaseOwner(cancelCreate = true)) "AUTH_FAILED" else "LOCAL_PROTECTION_PERSISTENCE"); return }
+                        if (authentication.cryptoObject?.cipher !== cipher || disposed) { dagDispatcher.invalidate(); recoveryRegistry.clear(); clearApproval(shortCode); finish(result, code = if (releaseOwner(cancelCreate = true)) "AUTH_FAILED" else "LOCAL_PROTECTION_PERSISTENCE"); return }
                         worker.execute {
                             var material: ByteArray? = null
                             var device: org.harmoniavault.go.mobilebridge.Device? = null
@@ -306,7 +322,7 @@ class NativeBridgePlugin internal constructor(
                     }
                 })
         } catch (_: Exception) {
-            if (consumed.compareAndSet(false, true)) { recoveryRegistry.clear(); clearApproval(shortCode); finish(result, code = if (releaseOwner(cancelCreate = true)) "AUTH_UNAVAILABLE" else "LOCAL_PROTECTION_PERSISTENCE") }
+            if (consumed.compareAndSet(false, true)) { dagDispatcher.invalidate(); recoveryRegistry.clear(); clearApproval(shortCode); finish(result, code = if (releaseOwner(cancelCreate = true)) "AUTH_UNAVAILABLE" else "LOCAL_PROTECTION_PERSISTENCE") }
         }
     }
 
@@ -330,6 +346,7 @@ class NativeBridgePlugin internal constructor(
     fun dispose() {
         // 所有owner分别尝试关闭；某一取消失败也不能阻止其它输入/通道退役。
         var failed = false
+        try { dagDispatcher.dispose() } catch (_: Exception) { failed = true }
         try { pinOwnerGate.retire { disposed = true } } catch (_: Exception) { failed = true }
         try { activeWorkflow?.invalidate() } catch (_: Exception) { failed = true }
         try { recoveryRegistry.invalidate() } catch (_: Exception) { failed = true }

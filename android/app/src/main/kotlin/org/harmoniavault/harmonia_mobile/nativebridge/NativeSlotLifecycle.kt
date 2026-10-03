@@ -7,7 +7,7 @@ internal fun interface NativeSlotTimer { fun cancel() }
 /**
  * native 宿主生命周期。稳定 generation 不等于认证，更不等于 SlotSnapshotLease.operationEpoch。
  * timer、retirement callback 均在 gate 外执行；Go Close/drain 不可放入立即 callback。
- * A 分片仅接收 Activity 事件，尚未接生产 BiometricPrompt/业务入口。
+ * B 分片仅用于封闭 native DAG dispatcher；没有 Flutter/MethodChannel capability。
  */
 internal class NativeSlotLifecycle(
     private val clockMillis: () -> Long,
@@ -97,8 +97,8 @@ internal class NativeSlotLifecycle(
         ticket?.phase = Phase.DEAD
         ticket = null
         disarm(effects)
-        resumed = false
-        unlocked = false
+        // 本地取消不捏造 SDK 后台，也不能等待一个不会再来的 onResume。
+        // paused/stopped/HOME/ScreenOff/locked 路径自行清观察值；票永远失效。
         if (permanent || generation == Long.MAX_VALUE) disposed = true else generation++
         effects += { onRetired(old) }
     }
@@ -109,12 +109,19 @@ internal class NativeSlotLifecycle(
         }
     }
     fun platformEpoch(): Long = synchronized(gate) { check(!disposed); generation }
+    fun isAuthenticationReady(t: Ticket): Boolean = synchronized(gate) {
+        valid(t) && t.phase == Phase.READY && t.succeeded && resumed && unlocked
+    }
+    fun canDeliverCompleted(permit: Permit): Boolean = synchronized(gate) {
+        !disposed && permit.ticket.platformEpoch == generation && permit.ticket.phase == Phase.CLOSED &&
+            clockMillis() < permit.ticket.deadline && resumed && unlocked
+    }
     fun isOperationActive(permit: Permit): Boolean = synchronized(gate) {
         valid(permit.ticket) && permit.ticket.phase == Phase.ACTIVE && resumed && unlocked
     }
     fun onResumed(deviceUnlocked: Boolean) = transition { effects ->
         if (!disposed) {
-            if (!deviceUnlocked) retire(effects) else {
+            if (!deviceUnlocked) { resumed = false; unlocked = false; retire(effects) } else {
                 resumed = true; unlocked = true
                 val t = ticket
                 if (t != null) {
@@ -146,8 +153,8 @@ internal class NativeSlotLifecycle(
             }
         }
     }
-    fun onUserLeaveHint() = transition { retire(it) }
-    fun onScreenOff() = transition { retire(it) }
+    fun onUserLeaveHint() = transition { resumed = false; unlocked = false; retire(it) }
+    fun onScreenOff() = transition { resumed = false; unlocked = false; retire(it) }
     fun invalidate() = transition { retire(it) }
     fun dispose() = transition { retire(it, permanent = true) }
 

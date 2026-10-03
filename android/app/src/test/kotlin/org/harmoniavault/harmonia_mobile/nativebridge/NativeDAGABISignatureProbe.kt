@@ -11,4 +11,6 @@ internal object NativeDAGABISignatureProbe {
     fun attach(flow: VaultWorkflow, registry: NativeDAGRegistry) = flow.attachDAGRegistry(registry)
     fun invalidate(flow: VaultWorkflow, registry: NativeDAGRegistry) { flow.invalidate(); registry.invalidate() }
     fun drain(registry: NativeDAGRegistry) = registry.close()
+    fun validate(command: String, codeLength: Long) = Mobilebridge.validateDAGRecoveryCommand(command, codeLength)
+    fun execute(flow: VaultWorkflow, command: String, completeCode: ByteArray): String = flow.executeDAGRecovery(command, completeCode)
 }

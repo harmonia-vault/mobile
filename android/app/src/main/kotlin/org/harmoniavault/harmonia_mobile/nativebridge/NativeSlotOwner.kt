@@ -36,6 +36,7 @@ internal class NativeSlotOwner private constructor(
     fun <T> read(block: () -> T): T = lease.read { requireLock(); block() }
     fun <T> mutate(onUnchangedFailure: (() -> Unit)? = null, block: () -> T): T = lease.mutate(onUnchangedFailure) { requireLock(); block() }
     fun clear(block: () -> Unit) = lease.clear { requireLock(); block() }
+    fun operationEpoch(): Long = read { lease.operationEpoch().also { check(it > 0) } }
     fun retire() = lease.retire()
     fun alive() = lease.isAlive() && !released.get()
     override fun close() {

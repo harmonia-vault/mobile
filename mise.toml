@@ -67,3 +67,7 @@ run = 'python3 tool/ios-security-test.py --device "${HARMONIA_IOS_TEST_DEVICE:?�
 [tasks.test-native-dag-lifecycle]
 description = "仅独立候选：编译原生生命周期与真实gobind签名，纯host状态测试，不运行Android"
 run = 'python3 tool/native-dag-lifecycle-test.py --candidate "${HARMONIA_DAG_CANDIDATE:?须显式候选目录}" --aar "${HARMONIA_DAG_AAR:?须显式固定候选AAR}" --output "${HARMONIA_DAG_TEST_OUTPUT:?须新输出目录}"'
+
+[tasks.test-native-dag-dispatch]
+description = "仅独立候选：B1/B2封闭原生分派、实际Java ABI与SDK编译，不运行Android"
+run = 'python3 tool/native-dag-dispatch-test.py --candidate "${HARMONIA_DAG_CANDIDATE:?须显式候选目录}" --aar "${HARMONIA_DAG_AAR:?须显式固定候选AAR}" --output "${HARMONIA_DAG_TEST_OUTPUT:?须新输出目录}"'

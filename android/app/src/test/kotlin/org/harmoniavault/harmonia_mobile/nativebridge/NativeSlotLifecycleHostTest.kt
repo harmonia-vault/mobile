@@ -110,6 +110,17 @@ internal object NativeSlotLifecycleHostTest {
             val g = Fixture(); g.lifecycle.onResumed(false); rejected { g.lifecycle.prepareAuthentication(Any(), 1) }
             g.lifecycle.onResumed(true); g.lifecycle.dispose(); rejected { g.lifecycle.platformEpoch() }; cases++
         }
+        run { // 未发生SDK pause的取消/本地owner清理后，新票仍需新的实际CryptoObject。
+            val f = Fixture(); f.lifecycle.onResumed(true); val (old, oldCrypto) = f.start()
+            f.lifecycle.authenticationRejected(old)
+            val (next, crypto) = f.start()
+            check(next.platformEpoch != old.platformEpoch && !f.lifecycle.isAuthenticationReady(next))
+            rejected { f.lifecycle.authenticationSucceeded(old, oldCrypto) }
+            f.lifecycle.authenticationSucceeded(next, crypto)
+            val permit = f.lifecycle.consume(next); f.lifecycle.complete(permit)
+            check(f.lifecycle.canDeliverCompleted(permit)); f.lifecycle.onScreenOff()
+            check(!f.lifecycle.canDeliverCompleted(permit)); cases++
+        }
         println("PASS native lifecycle host cases=" + cases)
     }
 }
