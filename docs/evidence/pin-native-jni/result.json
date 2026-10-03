@@ -1,0 +1,13 @@
+{
+  "status": "PASS",
+  "tests": "5/5 PASS",
+  "systemPINChanged": false,
+  "oldAVDChanged": false,
+  "normalAARChanged": false,
+  "stockPackageBaselinePreserved": true,
+  "ownEmulatorStopped": true,
+  "oldPreviewTransportPreserved": true,
+  "cleanupErrors": [],
+  "cleanupPassed": true,
+  "wallSeconds": 23.704
+}
