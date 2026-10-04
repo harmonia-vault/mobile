@@ -51,8 +51,12 @@ class MethodChannelGatewayPort
         NativeGatewayPort,
         NativeFixtureConnectionPort,
         NativeLocalProtectionPort,
-        NativeDAGRecoveryPort {
+        NativeDAGRecoveryPort,
+        NativeDAGProfilePort {
   const MethodChannelGatewayPort();
+  @override
+  Future<Map<String, Object?>> dagWorkflowProfile() =>
+      const NativeDAGRecoveryAdapter().dagWorkflowProfile();
   @override
   Future<Map<String, Object?>> executeDAGRecovery(
     String endpoint,
@@ -564,6 +568,8 @@ class NativeVaultGateway
 
   int _recoveryEpoch = 0;
   bool _dagSelected = false;
+  Set<String> _dagRuntimeOperations = const {};
+  bool _nativeDAGOwnerCancellation = false;
   RecoveryTrusted? _dagTrusted;
 
   @override
@@ -580,7 +586,9 @@ class NativeVaultGateway
         !_cleanupPending &&
         _endpoint.isNotEmpty)
       for (final op in dagRecoveryFields.keys)
-        if (_runtimeOperations.contains(op) &&
+        if ((op == 'cancelDAGRecoveryOwner'
+                ? _nativeDAGOwnerCancellation
+                : _dagRuntimeOperations.contains(op)) &&
             _verifiedDAGOperations.contains(op))
           op,
   });
@@ -628,6 +636,13 @@ class NativeVaultGateway
       }
       final reply = decodeDAGRecovery(operation, raw);
       final result = reply.payload;
+      if (result is RecoveryResolution &&
+          (operation == 'queryDAGRecoveryResolution' ||
+              operation == 'closeDAGRecoveryOriginal') &&
+          (result.operationId != fields['operationId'] ||
+              result.targetHash != fields['targetHash'])) {
+        throw const GatewayFailure('服务器恢复结果不属于当前原操作，已拒绝。');
+      }
       if (result is RecoveryTrusted) {
         if (operation == 'applyDAGRecoveredDevice' &&
                 (result.operationId != fields['operationId'] ||
@@ -1137,6 +1152,8 @@ class NativeVaultGateway
   Future<void> initialize(String endpoint) async {
     if (!experimentalOptIn) throw const GatewayFailure('未启用实验原生入口。');
     final epoch = _scopeEpoch;
+    _dagRuntimeOperations = const {};
+    _nativeDAGOwnerCancellation = false;
     final caps = await _port.capabilities();
     final profile = await _port.profile();
     if (epoch != _scopeEpoch) return;
@@ -1157,6 +1174,20 @@ class NativeVaultGateway
     if (caps['appPINDeviceExists'] == true) _pinPreviouslyObserved = true;
     _protectedDeviceExists = caps['protectedDeviceExists'] == true;
     _runtimeOperations = Set.unmodifiable(operations.cast<String>());
+    if (_verifiedDAGOperations.isNotEmpty && _port is NativeDAGProfilePort) {
+      final dag = await _platform(
+        () => (_port as NativeDAGProfilePort).dagWorkflowProfile(),
+      );
+      if (epoch != _scopeEpoch) return;
+      _dagRuntimeOperations = decodeDAGWorkflowProfile(dag);
+      if (caps.containsKey('nativeDAGOwnerCancellation') &&
+          caps['nativeDAGOwnerCancellation'] is! bool) {
+        _dagRuntimeOperations = const {};
+        throw const GatewayFailure('本机恢复取消能力配置无效，当前不可用。');
+      }
+      _nativeDAGOwnerCancellation = caps['nativeDAGOwnerCancellation'] == true;
+    }
+
     if (productFixture) {
       if (!kDebugMode || _port is! NativeFixtureConnectionPort) {
         throw const GatewayFailure('测试CA入口只在独立debug flavor可用。');

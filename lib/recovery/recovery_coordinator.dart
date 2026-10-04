@@ -35,11 +35,17 @@ class RecoveryCoordinator {
   RecoveryPending? _pending;
   RecoveryEnrollment? _enrollment;
   RecoveryChoices? _choices;
+  RecoveryResolution? _resolution;
   Map<String, String>? _sealedSelection;
   DateTime? _ownerDeadline;
   Timer? _timer;
   bool get active =>
-      _trusted || _owner || _hasOriginal || _unknown || _code != null;
+      _trusted ||
+      _owner ||
+      _hasOriginal ||
+      _resolution != null ||
+      _unknown ||
+      _code != null;
   String? get visibleCode => _visible ? _code : null;
   bool get _liveOwner =>
       _owner && _ownerDeadline != null && now().isBefore(_ownerDeadline!);
@@ -49,7 +55,8 @@ class RecoveryCoordinator {
   String? get _id =>
       _enrollment?.operationId ??
       _pending?.operationId ??
-      _preparation?.operationId;
+      _preparation?.operationId ??
+      _resolution?.operationId;
   String? get _hash => _enrollment?.contentHash ?? _pending?.contentHash;
 
   RecoveryPresentation presentation({
@@ -78,6 +85,7 @@ class RecoveryCoordinator {
       'openDAGRecoveryOwner',
       (_inspected || gateway?.recoveryStateMayExist == false) &&
           !_hasOriginal &&
+          _resolution == null &&
           !_liveOwner &&
           !_trusted &&
           !_unknown,
@@ -147,6 +155,38 @@ class RecoveryCoordinator {
       _inspected && !_liveOwner && !_trusted,
     );
     permit(RecoveryAction.pullDevice, 'pullDAGRecoveredDevice', _trusted);
+    final closureTarget =
+        _cap('dagRecoveryResolutionDiscovery') &&
+        !_trusted &&
+        !_liveOwner &&
+        _enrollment == null &&
+        _preparation == null &&
+        (_pending?.kind == 'transition-v2' || _resolution != null);
+    permit(
+      RecoveryAction.queryClosure,
+      'queryDAGRecoveryResolution',
+      closureTarget &&
+          _resolution?.accepted != true &&
+          _cap('dagRecoveryResolutionInfo'),
+    );
+    permit(
+      RecoveryAction.closeOriginal,
+      'closeDAGRecoveryOriginal',
+      closureTarget &&
+          _resolution?.closed != true &&
+          _resolution?.accepted != true &&
+          _pending?.originalApplied != true &&
+          _cap('dagRecoveryResolutionInfo'),
+    );
+    permit(
+      RecoveryAction.restartAfterClosure,
+      'openDAGRecoveryAfterClosure',
+      closureTarget &&
+          _resolution?.closed == true &&
+          !_hasOriginal &&
+          !_unknown,
+    );
+
     // 本机取消允许在网络在途时执行。它不依赖业务 busy 锁。
     if (available &&
         _cap('cancelDAGRecoveryOwner') &&
@@ -158,8 +198,9 @@ class RecoveryCoordinator {
       status: _status,
       busy: busy || _canceling,
       operationId: _id,
-      acceptedSequence:
-          _enrollment?.acceptedSequence ?? _pending?.acceptedSequence,
+      acceptedSequence: _resolution != null && _resolution!.sequence != '0'
+          ? _resolution!.sequence
+          : _enrollment?.acceptedSequence ?? _pending?.acceptedSequence,
       preparationPhase: _enrollment?.phase ?? _preparation?.phase,
       observation: _observation,
       confirmation: _confirmation,
@@ -174,9 +215,9 @@ class RecoveryCoordinator {
       choices: _choices?.environments ?? const [],
       actions: actions,
       blockedReasons: const {
-        RecoveryAction.queryClosure: '服务器原分支查询的 DAG 原生桥尚未验收。',
-        RecoveryAction.closeOriginal: '服务器关闭旧恢复分支的 DAG 原生桥尚未验收；本机取消不能代替。',
-        RecoveryAction.restartAfterClosure: '关闭后的明确新恢复入口尚未接通。',
+        RecoveryAction.queryClosure: '仅支持已准备完成的恢复码更换；须先结束本机恢复过程，并确认此设备支持查询。',
+        RecoveryAction.closeOriginal: '仅支持尚未确认完成的恢复码更换；关闭服务器操作须单独确认，本机取消不能代替。',
+        RecoveryAction.restartAfterClosure: '须先确认服务器操作已关闭并已保存到本机，才能重新开始。',
       },
     );
   }
@@ -214,6 +255,7 @@ class RecoveryCoordinator {
       _pending = null;
       _enrollment = null;
       _sealedSelection = null;
+      _resolution = null;
       _error = null;
       _stage = RecoveryStage.entry;
       _status = '请先检查本机保存的原恢复操作。';
@@ -394,6 +436,9 @@ class RecoveryCoordinator {
   }
 
   Future<void> inspect() => run((epoch) async {
+    if (gateway?.recoveryStateMayExist == false && _resolution != null) {
+      throw const GatewayFailure('已保存恢复结果对应的本机设备未返回，已停止。');
+    }
     if (gateway?.recoveryStateMayExist == false &&
         !_hasOriginal &&
         !_liveOwner) {
@@ -403,10 +448,29 @@ class RecoveryCoordinator {
       _status = '原生未发现本机设备钥匙；输入账号和旧码后将明确创建本机受保护设备。';
       return;
     }
+    RecoveryResolutionDiscovery? discovery;
+    if (!_liveOwner && _cap('dagRecoveryResolutionDiscovery')) {
+      final result = await _call(epoch, 'dagRecoveryResolutionDiscovery');
+      if (result == null) return;
+      discovery = result.payload as RecoveryResolutionDiscovery;
+      if (discovery.state == 'none' && _resolution != null) {
+        throw const GatewayFailure('已保存的恢复操作结果未返回，已停止。');
+      }
+      if (discovery.state == 'closed') {
+        final info = await _resolutionInfo(epoch, discovery);
+        if (info == null) return;
+        _applyResolution(info, fromInfo: true);
+        _inspected = true;
+        return;
+      }
+    }
     final enrolled = await _call(epoch, 'dagRecoveredDeviceInfo');
     if (enrolled == null) return;
     final e = enrolled.payload as RecoveryEnrollment;
     if (e.state != 'none') {
+      if (discovery?.state == 'supported-original') {
+        throw const GatewayFailure('本机恢复目标在检查期间改变，已停止。');
+      }
       _applyEnrollment(e);
       _inspected = true;
       return;
@@ -415,6 +479,9 @@ class RecoveryCoordinator {
     if (prepared == null) return;
     final p = prepared.payload as RecoveryPreparation;
     if (p.state != 'none') {
+      if (discovery?.state == 'supported-original') {
+        throw const GatewayFailure('本机恢复目标在检查期间改变，已停止。');
+      }
       if (_id != null && _id != p.operationId) {
         throw const GatewayFailure('本机原操作身份改变，已拒绝。');
       }
@@ -432,7 +499,17 @@ class RecoveryCoordinator {
     if (original.state == 'none' && _hasOriginal) {
       throw const GatewayFailure('原恢复记录未返回；不能视为可新建。');
     }
+    if (original.state == 'none' &&
+        discovery != null &&
+        discovery.state != 'none') {
+      throw const GatewayFailure('本机恢复状态不能作为新的恢复入口，已停止。');
+    }
     _applyPending(original);
+    if (discovery?.state == 'supported-original') {
+      final info = await _resolutionInfo(epoch, discovery!);
+      if (info == null) return;
+      _applyResolution(info, fromInfo: true);
+    }
     _inspected = true;
     if (!_hasOriginal && !_liveOwner) {
       _unknown = false;
@@ -502,6 +579,164 @@ class RecoveryCoordinator {
       if (r != null) _applyEnrollment(r.payload as RecoveryEnrollment);
     }
   });
+  Future<RecoveryResolution?> _resolutionInfo(
+    int epoch,
+    RecoveryResolutionDiscovery discovery,
+  ) async {
+    if (!discovery.supported) {
+      throw const GatewayFailure('当前恢复阶段不支持服务器操作关闭；原结果尚未重新确认。');
+    }
+    final reply = await _call(epoch, 'dagRecoveryResolutionInfo');
+    if (reply == null) return null;
+    final info = reply.payload as RecoveryResolution;
+    if (info.operationId != discovery.operationId ||
+        info.targetHash != discovery.targetHash ||
+        info.closed != (discovery.state == 'closed')) {
+      throw const GatewayFailure('本机恢复目标在检查期间改变，已停止。');
+    }
+    return info;
+  }
+
+  void _applyResolution(RecoveryResolution value, {bool fromInfo = false}) {
+    final previous = _resolution;
+    if (_enrollment != null ||
+        _preparation != null ||
+        _pending != null &&
+            (_pending!.kind != 'transition-v2' ||
+                _pending!.operationId != value.operationId) ||
+        previous != null &&
+            (previous.operationId != value.operationId ||
+                previous.targetHash != value.targetHash ||
+                !(fromInfo &&
+                        previous.accepted &&
+                        value.localState == 'pending') &&
+                    (BigInt.parse(previous.sequence) >
+                            BigInt.parse(value.sequence) ||
+                        previous.localState != 'pending' &&
+                            (previous.localState != value.localState ||
+                                previous.sequence != value.sequence))) ||
+        _pending != null &&
+            _pending!.acceptedSequence != '0' &&
+            (value.closed ||
+                value.accepted &&
+                    value.sequence != _pending!.acceptedSequence)) {
+      throw const GatewayFailure('原恢复操作的身份或已确认结果改变，已拒绝。');
+    }
+    if (fromInfo &&
+        previous?.accepted == true &&
+        value.localState == 'pending') {
+      _applyResolution(previous!);
+      return;
+    }
+    _resolution = value;
+    // 只读 Info 的 unknown 不能覆盖已经核验的原包接受状态。
+    if (fromInfo &&
+        value.localState == 'pending' &&
+        _pending?.originalApplied == true) {
+      return;
+    }
+    _observation = value.observation;
+    _confirmation = value.confirmation;
+    _retireOwner();
+    _choices = null;
+    _trusted = false;
+    _unknown = false;
+    if (value.closed) {
+      _pending = null;
+      _sealedSelection = null;
+      _stage = RecoveryStage.closed;
+      _status = '服务器已关闭这次恢复操作，结果已保存到本机；可明确开始新的恢复。';
+    } else if (value.accepted) {
+      _stage = RecoveryStage.transitionConfirmed;
+      _status = '原恢复操作已完成并核验；它不能再关闭，本机设备仍未可信。';
+    } else {
+      _stage = RecoveryStage.transitionPending;
+      _status = '原恢复操作尚未确认终态；请沿同一操作继续查询或明确关闭。';
+    }
+  }
+
+  Future<void> resolve(
+    Uint8List code, {
+    bool closeRequested = false,
+    bool destructiveConfirmed = false,
+  }) async {
+    try {
+      await run((epoch) async {
+        if (closeRequested && !destructiveConfirmed) {
+          throw const _RecoveryInputFailure('请明确确认关闭这次服务器恢复操作。');
+        }
+        if (_liveOwner ||
+            _enrollment != null ||
+            _preparation != null ||
+            (_pending?.kind != 'transition-v2' && _resolution == null) ||
+            _resolution?.accepted == true ||
+            closeRequested &&
+                (_resolution?.closed == true ||
+                    _pending?.originalApplied == true)) {
+          throw const _RecoveryInputFailure('当前阶段不支持关闭或查询服务器恢复操作。');
+        }
+        // targetHash 是原生原目标摘要，不是 pending 的 contentHash。
+        final discovered = await _call(epoch, 'dagRecoveryResolutionDiscovery');
+        if (discovered == null) return;
+        final info = await _resolutionInfo(
+          epoch,
+          discovered.payload as RecoveryResolutionDiscovery,
+        );
+        if (info == null) return;
+        _applyResolution(info, fromInfo: true);
+        if (info.closed && closeRequested) return;
+        final reply = await _call(
+          epoch,
+          closeRequested
+              ? 'closeDAGRecoveryOriginal'
+              : 'queryDAGRecoveryResolution',
+          fields: {
+            'operationId': info.operationId,
+            'targetHash': info.targetHash,
+          },
+          code: code,
+        );
+        if (reply != null) {
+          _applyResolution(reply.payload as RecoveryResolution);
+        }
+      });
+    } finally {
+      code.fillRange(0, code.length, 0);
+    }
+  }
+
+  Future<void> restartAfterClosure(Uint8List code) async {
+    try {
+      await run((epoch) async {
+        if (_resolution?.closed != true ||
+            _hasOriginal ||
+            _liveOwner ||
+            _unknown) {
+          throw const _RecoveryInputFailure('尚未确认保存关闭结果，不能重新开始恢复。');
+        }
+        final reply = await _call(
+          epoch,
+          'openDAGRecoveryAfterClosure',
+          code: code,
+        );
+        if (reply == null) return;
+        final owner = reply.payload as RecoveryOwner;
+        if (!owner.rotationRequired) {
+          throw const GatewayFailure('新的受限恢复状态无效，未继续。');
+        }
+        _resolution = null;
+        _observation = 'unknown';
+        _confirmation = 'none';
+        _keepOwner(owner);
+        _stage = RecoveryStage.restricted;
+        _unknown = false;
+        _status = '新的受限恢复过程已打开；请明确生成新的恢复码。';
+      });
+    } finally {
+      code.fillRange(0, code.length, 0);
+    }
+  }
+
   Future<void> loadChoices() => run((epoch) async {
     final reply = await _call(epoch, 'dagRecoveredEnrollmentChoices');
     if (reply == null) return;

@@ -81,6 +81,37 @@ class RecoveryQuery extends RecoveryPayload {
   final bool rotationRequired;
 }
 
+/// 只读本机发现；none/unsupported 不代表已关闭。
+class RecoveryResolutionDiscovery extends RecoveryPayload {
+  const RecoveryResolutionDiscovery(
+    this.state,
+    this.operationId,
+    this.targetHash,
+  );
+  final String state, operationId, targetHash;
+  bool get supported => state == 'supported-original' || state == 'closed';
+}
+
+/// 已验证的原恢复操作处置；任何状态都不授予设备信任。
+class RecoveryResolution extends RecoveryPayload {
+  const RecoveryResolution({
+    required this.operationId,
+    required this.targetHash,
+    required this.observation,
+    required this.localState,
+    required this.confirmation,
+    required this.sequence,
+  });
+  final String operationId,
+      targetHash,
+      observation,
+      localState,
+      confirmation,
+      sequence;
+  bool get closed => localState == 'closed';
+  bool get accepted => localState == 'accepted-original-confirmed';
+}
+
 class RecoveryCode extends RecoveryPayload {
   const RecoveryCode(this.value);
   final String value;

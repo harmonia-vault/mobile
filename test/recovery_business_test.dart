@@ -121,13 +121,27 @@ Map<String, Object?> envelope(
     'error': {'code': soft, 'ownerRetained': true, 'retryOriginal': true},
 };
 
-class DAGPortFixture extends PortFixture implements NativeDAGRecoveryPort {
-  DAGPortFixture() {
-    advertisedOperations = {
-      ...PortFixture.operations,
-      ...dagRecoveryFields.keys,
-    };
-  }
+class DAGPortFixture extends PortFixture
+    implements NativeDAGRecoveryPort, NativeDAGProfilePort {
+  Set<String> dagOperations = dagRecoveryFields.keys
+      .where((op) => op != 'cancelDAGRecoveryOwner')
+      .toSet();
+  bool nativeCancel = true;
+  @override
+  Future<Map<String, Object?>> capabilities() async => {
+    ...await super.capabilities(),
+    'nativeDAGOwnerCancellation': nativeCancel,
+  };
+  @override
+  Future<Map<String, Object?>> dagWorkflowProfile() async => {
+    'version': 1,
+    'profile': dagRecoveryProfile,
+    'experimental': true,
+    'realVaultReady': false,
+    'systemAuthenticationPerOperation': true,
+    'dispatch': 'executeDAGRecovery',
+    'operations': dagOperations.toList(),
+  };
   final dagCalls = <(String, Map<String, String>)>[];
   Map<String, Object?> p = pending(), e = enrolled(), prep = preparation();
   bool rotated = false,
@@ -159,6 +173,33 @@ class DAGPortFixture extends PortFixture implements NativeDAGRecoveryPort {
         };
       case 'openDAGRecoveryOwner':
         return envelope(op, owner());
+      case 'dagRecoveryResolutionDiscovery':
+        final state = e['state'] != 'none' || prep['state'] != 'none'
+            ? 'unsupported'
+            : p['state'] == 'none'
+            ? 'none'
+            : 'supported-original';
+        return envelope(op, {
+          'version': 1,
+          'profile': 'recovery-operation-closure-v1',
+          'state': state,
+          'operationId': state == 'supported-original' ? p['operationId'] : '',
+          'targetHash': state == 'supported-original' ? 'e' * 64 : '',
+          'trustedDevice': false,
+        });
+      case 'dagRecoveryResolutionInfo':
+        return envelope(op, {
+          'version': 1,
+          'profile': 'recovery-operation-closure-v1',
+          'operationId': p['operationId'],
+          'targetHash': 'e' * 64,
+          'observation': 'unknown',
+          'localState': 'pending',
+          'confirmation': 'none',
+          'sequence': '0',
+          'rotationRequired': true,
+          'trustedDevice': false,
+        });
       case 'dagRecoveredDeviceInfo':
         return envelope(op, e);
       case 'dagRecoveryPreparationInfo':
@@ -420,7 +461,9 @@ void main() {
     );
     expect(f.dagCalls, isEmpty);
     expect(input.every((b) => b == 0), true);
-    final f2 = DAGPortFixture()..advertisedOperations = PortFixture.operations;
+    final f2 = DAGPortFixture()
+      ..dagOperations = {}
+      ..nativeCancel = false;
     final (c2, g2, _) = await setup(fixture: f2);
     addTearDown(c2.dispose);
     expect(g2.recoveryCapabilities, isEmpty);
@@ -680,6 +723,9 @@ void main() {
     expect(c.recovery.ownerAvailable, false);
     expect(c.recovery.allows(RecoveryAction.open), false);
     expect(c.recovery.allows(RecoveryAction.submitEnrollment), false);
-    expect(f.dagCalls.map((x) => x.$1), ['dagRecoveredDeviceInfo']);
+    expect(f.dagCalls.map((x) => x.$1), [
+      'dagRecoveryResolutionDiscovery',
+      'dagRecoveredDeviceInfo',
+    ]);
   });
 }

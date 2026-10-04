@@ -9,6 +9,7 @@ import '../vault_controller.dart';
 import '../security/sensitive_input_guard.dart';
 import 'design_system.dart';
 import 'local_pin_ui.dart';
+import 'recovery_ui.dart';
 
 class HarmoniaApp extends StatefulWidget {
   const HarmoniaApp({super.key, required this.controller});
@@ -249,7 +250,7 @@ Widget _body(VaultController c, VaultPage? p) {
     VaultPage.login => _AccountForm(c: c, register: false),
     VaultPage.registration => _AccountForm(c: c, register: true),
     VaultPage.emailProof => _EmailProofPage(c: c),
-    VaultPage.recovery => _RecoveryWizard(c: c),
+    VaultPage.recovery => RecoveryPanel(controller: c),
     VaultPage.initialization => _InitPage(c: c),
     VaultPage.authorization => _AwaitPage(c: c),
     VaultPage.environments => _EnvList(c: c),
@@ -1099,61 +1100,6 @@ class _EmailProofPageState extends State<_EmailProofPage> {
           onPressed: c.busy ? null : () => c.navigate(VaultPage.login),
           child: const Text('重新登录确认状态'),
         ),
-      ],
-    );
-  }
-}
-
-class _RecoveryWizard extends StatelessWidget {
-  const _RecoveryWizard({required this.c});
-
-  final VaultController c;
-
-  @override
-  Widget build(BuildContext context) {
-    final restricted = c.sessionStage == SessionStage.restrictedRecovery;
-    return HPage(
-      narrow: true,
-      children: [
-        HHeader(
-          icon: Icons.health_and_safety_outlined,
-          title: restricted ? '受限恢复' : '恢复访问',
-          body: '使用恢复码重新获得保险库访问。',
-        ),
-        if (restricted)
-          HNotice(
-            c.recoveryStatus,
-            title: '受限恢复中，暂不能访问环境与设备',
-            tone: HTone.warning,
-            icon: Icons.gpp_maybe_outlined,
-          ),
-        HSection(
-          title: '恢复步骤',
-          form: true,
-          children: [
-            HStep(1, '输入旧的完整恢复码', '验证后进入受限恢复。', done: restricted),
-            const HStep(2, '完整重新输入新恢复码', '新恢复码会单独显示；重新输入用于确认抄写无误。'),
-            const HStep(3, '登记本机', '逐项选择环境、角色与有效期。完成后本机才成为可信设备。'),
-          ],
-        ),
-        const HNotice(
-          '此版本暂不支持在 App 内完成恢复，不会生成或显示新的恢复码。',
-          icon: Icons.construction_outlined,
-        ),
-        _actions([
-          FilledButton(
-            onPressed: null,
-            child: Text(restricted ? '继续：输入新恢复码' : '开始恢复'),
-          ),
-          if (restricted)
-            OutlinedButton(
-              onPressed: c.busy
-                  ? null
-                  : () => unawaited(c.queryRecoveryStatus()),
-              child: const Text('查询恢复状态'),
-            ),
-        ]),
-        const HHint('恢复码不是备份，不保存变量内容。如果同时丢失所有可信设备和恢复码，旧保险库将无法恢复。'),
       ],
     );
   }

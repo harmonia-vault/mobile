@@ -619,7 +619,7 @@ class VaultController extends ChangeNotifier
           if (_hasManagementContinuation) {
             _suspendVault();
             _clearManagementList();
-            _managementStatus = '仅续办原管理ID；prepared尚未提交，未知或accepted不代表本机已完成。';
+            _managementStatus = '请继续处理原设备管理操作；结果未知或服务器已接受，都不代表本机已完成更新。';
           }
         }
       }
@@ -635,15 +635,15 @@ class VaultController extends ChangeNotifier
         _managementOperation = result;
         _managementInspected = true;
         _managementStatus = result.phase == ManagementPhase.idle
-            ? '本机没有未决管理原包；设备列表仍须独立读取。'
-            : '已读取本机原管理状态，未自动提交或改权。';
+            ? '本机没有待完成的设备管理操作；请刷新设备列表。'
+            : '已读取原设备管理操作；请确认下一步。';
       });
   @override
   Future<void> loadManagedDevices(String environmentId) => _managementAction(
     ManagementAction.loadDevices,
     (epoch) async {
       if (!_managementAdmin(environmentId)) {
-        throw const GatewayFailure('仅当前已验Admin环境可读取管理设备。');
+        throw const GatewayFailure('只有当前拥有管理权限的环境才能查看设备授权。');
       }
       _clearManagementList();
       // 先查全局原管理槽，不能绕冷pending新建另一ID。
@@ -664,7 +664,7 @@ class VaultController extends ChangeNotifier
       }
       _managedDevices = List.unmodifiable(rows);
       _managedEnvironment = environmentId;
-      _managementStatus = '显示成熟Go验证的设备ID与授权元数据；准备变更后仍需明确提交。';
+      _managementStatus = '已验证设备 ID 和当前授权；请确认后提交变更。';
     },
   );
   void _validateManagedTarget(
@@ -703,7 +703,7 @@ class VaultController extends ChangeNotifier
     if (epoch != _epoch) return;
     _managementOperation = result;
     _retireSensitiveForm();
-    _managementStatus = '原授权意图已密封；尚未提交。必须明确提交同一原操作。';
+    _managementStatus = '授权变更已准备，尚未提交；请确认后提交此项变更。';
   });
   @override
   Future<void> prepareManagedDeviceRevocation({
@@ -711,7 +711,7 @@ class VaultController extends ChangeNotifier
     required String subjectDeviceId,
     required bool destructiveConfirmed,
   }) => _managementAction(ManagementAction.prepareRevocation, (epoch) async {
-    if (!destructiveConfirmed) throw const GatewayFailure('整台其它设备撤销需要明确破坏性确认。');
+    if (!destructiveConfirmed) throw const GatewayFailure('请确认撤销这台设备的全部访问权限。');
     _validateManagedTarget(environmentId, subjectDeviceId, other: true);
     final result = await (gateway as DeviceManagementGateway)
         .prepareOtherDeviceRevocation(
@@ -721,7 +721,7 @@ class VaultController extends ChangeNotifier
     if (epoch != _epoch) return;
     _managementOperation = result;
     _retireSensitiveForm();
-    _managementStatus = '其它设备撤销原包已密封；未声称服务器撤销生效，需明确提交。';
+    _managementStatus = '设备撤销已准备，尚未生效；请确认后提交。';
   });
   Future<void> _finishManagement(ManagementOperation result, int epoch) async {
     _managementOperation = result;
@@ -734,8 +734,8 @@ class VaultController extends ChangeNotifier
     await _pullRestoredSession(epoch);
     if (epoch != _epoch) return;
     _managementStatus = result.phase == ManagementPhase.cancelled
-        ? '原未提交管理包已确认取消；当前视图已重新验证。'
-        : '原管理操作已接受并本机应用；当前权限已重新拉取。';
+        ? '尚未提交的设备管理操作已取消；当前权限已重新验证。'
+        : '设备管理操作已完成；当前权限已更新。';
   }
 
   @override
@@ -1024,7 +1024,7 @@ class VaultController extends ChangeNotifier
   Future<void> queryRecoveryClosure(Uint8List completeCurrentCode) =>
       _recoveryAction(
         RecoveryAction.queryClosure,
-        () async {},
+        () => _recoveryFlow.resolve(completeCurrentCode),
         code: completeCurrentCode,
       );
   @override
@@ -1033,14 +1033,18 @@ class VaultController extends ChangeNotifier
     required bool destructiveConfirmed,
   }) => _recoveryAction(
     RecoveryAction.closeOriginal,
-    () async {},
+    () => _recoveryFlow.resolve(
+      completeCurrentCode,
+      closeRequested: true,
+      destructiveConfirmed: destructiveConfirmed,
+    ),
     code: completeCurrentCode,
   );
   @override
   Future<void> restartRecoveryAfterClosure(Uint8List completeCurrentCode) =>
       _recoveryAction(
         RecoveryAction.restartAfterClosure,
-        () async {},
+        () => _recoveryFlow.restartAfterClosure(completeCurrentCode),
         code: completeCurrentCode,
       );
 

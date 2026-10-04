@@ -17,6 +17,10 @@ abstract interface class NativeDAGRecoveryPort {
   );
 }
 
+abstract interface class NativeDAGProfilePort {
+  Future<Map<String, Object?>> dagWorkflowProfile();
+}
+
 const dagRecoveryFields = <String, Set<String>>{
   'openDAGRecoveryOwner': {'email', 'password'},
   'dagRecoveryOwnerInfo': {},
@@ -38,11 +42,19 @@ const dagRecoveryFields = <String, Set<String>>{
   'applyDAGRecoveredDevice': {'operationId', 'contentHash'},
   'restoreDAGRecoveredDevice': {},
   'pullDAGRecoveredDevice': {},
+  'dagRecoveryResolutionInfo': {},
+  'dagRecoveryResolutionDiscovery': {},
+  'queryDAGRecoveryResolution': {'operationId', 'targetHash'},
+  'closeDAGRecoveryOriginal': {'operationId', 'targetHash'},
+  'openDAGRecoveryAfterClosure': {},
 };
 const _codeOperations = {
   'openDAGRecoveryOwner',
   'sealDAGRecoveryTransition',
   'queryDAGRecoveryOriginal',
+  'queryDAGRecoveryResolution',
+  'closeDAGRecoveryOriginal',
+  'openDAGRecoveryAfterClosure',
 };
 const _trustedOperations = {
   'applyDAGRecoveredDevice',
@@ -50,9 +62,23 @@ const _trustedOperations = {
   'pullDAGRecoveredDevice',
 };
 
-class NativeDAGRecoveryAdapter implements NativeDAGRecoveryPort {
+class NativeDAGRecoveryAdapter
+    implements NativeDAGRecoveryPort, NativeDAGProfilePort {
   const NativeDAGRecoveryAdapter();
   static const _channel = MethodChannel('org.harmoniavault/native/v1');
+  @override
+  Future<Map<String, Object?>> dagWorkflowProfile() async {
+    final value = await _channel.invokeMethod<String>('dagWorkflowProfile');
+    if (value == null || value.length > 32768) {
+      throw const GatewayFailure('恢复能力配置缺失或过大，当前不可用。');
+    }
+    try {
+      return nativeObject(jsonDecode(value), '恢复能力');
+    } on FormatException {
+      throw const GatewayFailure('恢复能力配置编码无效，当前不可用。');
+    }
+  }
+
   @override
   Future<Map<String, Object?>> executeDAGRecovery(
     String endpoint,
@@ -446,6 +472,7 @@ RecoveryReply decodeDAGRecovery(String operation, Map<String, Object?> raw) {
   final payload = switch (operation) {
     'openDAGRecoveryOwner' ||
     'dagRecoveryOwnerInfo' ||
+    'openDAGRecoveryAfterClosure' ||
     'retryDAGRecoveryTransition' => _owner(raw['data']),
     'dagRecoveryPreparationInfo' => _preparation(raw['data']),
     'dagRecoveryPendingInfo' ||
@@ -456,6 +483,10 @@ RecoveryReply decodeDAGRecovery(String operation, Map<String, Object?> raw) {
     'dagRecoveredEnrollmentChoices' => _choices(raw['data']),
     'beginDAGRecoveryTransition' => _recoveryCode(raw['recoveryCode']),
     'queryDAGRecoveryOriginal' => _query(raw['data']),
+    'dagRecoveryResolutionDiscovery' => _resolutionDiscovery(raw['data']),
+    'dagRecoveryResolutionInfo' ||
+    'queryDAGRecoveryResolution' ||
+    'closeDAGRecoveryOriginal' => _resolution(raw['data']),
     'applyDAGRecoveredDevice' ||
     'restoreDAGRecoveredDevice' ||
     'pullDAGRecoveredDevice' => _trusted(raw['data']),
@@ -498,4 +529,111 @@ RecoveryQuery _query(Object? raw) {
     confirmation,
     _bool(m['rotationRequired']),
   );
+}
+
+RecoveryResolution _resolution(Object? raw) {
+  final m = _object(raw, {
+    'version',
+    'profile',
+    'operationId',
+    'targetHash',
+    'observation',
+    'localState',
+    'confirmation',
+    'sequence',
+    'rotationRequired',
+    'trustedDevice',
+  });
+  if (m['version'] != 1 ||
+      m['profile'] != 'recovery-operation-closure-v1' ||
+      m['rotationRequired'] != true ||
+      m['trustedDevice'] != false) {
+    _invalid();
+  }
+  final state = _string(m['localState']),
+      observation = _string(m['observation']),
+      confirmation = _string(m['confirmation']),
+      sequence = dagDecimal(m['sequence']);
+  final valid = switch (state) {
+    'pending' =>
+      {'unknown', 'pending'}.contains(observation) &&
+          confirmation == 'none' &&
+          sequence == '0',
+    'closed' =>
+      observation == 'closed' &&
+          confirmation == 'native-confirmed' &&
+          sequence != '0',
+    'accepted-original-confirmed' =>
+      observation == 'accepted' &&
+          confirmation == 'original-history-confirmed' &&
+          sequence != '0',
+    _ => false,
+  };
+  if (!valid) _invalid();
+  return RecoveryResolution(
+    operationId: _id(m['operationId']),
+    targetHash: _hash(m['targetHash']),
+    observation: observation,
+    localState: state,
+    confirmation: confirmation,
+    sequence: sequence,
+  );
+}
+
+RecoveryResolutionDiscovery _resolutionDiscovery(Object? raw) {
+  final m = _object(raw, {
+    'version',
+    'profile',
+    'state',
+    'operationId',
+    'targetHash',
+    'trustedDevice',
+  });
+  if (m['version'] != 1 ||
+      m['profile'] != 'recovery-operation-closure-v1' ||
+      m['trustedDevice'] != false) {
+    _invalid();
+  }
+  final state = _string(m['state']),
+      id = _id(m['operationId'], empty: true),
+      hash = _hash(m['targetHash'], empty: true);
+  if ({'none', 'unsupported'}.contains(state)) {
+    if (id.isNotEmpty || hash.isNotEmpty) _invalid();
+  } else if (!{'supported-original', 'closed'}.contains(state) ||
+      id.isEmpty ||
+      hash.isEmpty) {
+    _invalid();
+  }
+  return RecoveryResolutionDiscovery(state, id, hash);
+}
+
+Set<String> decodeDAGWorkflowProfile(Map<String, Object?> raw) {
+  nativeFields(raw, {
+    'version',
+    'profile',
+    'experimental',
+    'realVaultReady',
+    'systemAuthenticationPerOperation',
+    'dispatch',
+    'operations',
+  });
+  final operations = raw['operations'];
+  if (raw['version'] != 1 ||
+      raw['profile'] != dagRecoveryProfile ||
+      raw['experimental'] != true ||
+      raw['realVaultReady'] != false ||
+      raw['systemAuthenticationPerOperation'] != true ||
+      raw['dispatch'] != 'executeDAGRecovery' ||
+      operations is! List ||
+      operations.length >= dagRecoveryFields.length ||
+      operations.any(
+        (op) =>
+            op is! String ||
+            op == 'cancelDAGRecoveryOwner' ||
+            !dagRecoveryFields.containsKey(op),
+      ) ||
+      operations.toSet().length != operations.length) {
+    throw const GatewayFailure('恢复能力配置不符合固定合同，当前不可用。');
+  }
+  return Set.unmodifiable(operations.cast<String>());
 }
