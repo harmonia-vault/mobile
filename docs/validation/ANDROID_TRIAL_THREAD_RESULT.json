@@ -1,0 +1,55 @@
+{
+  "scope": "one targeted real JVM worker/main-executor affinity regression, not Android SDK runtime",
+  "results": [
+    {
+      "case": "red",
+      "exitCode": 0,
+      "seconds": 24.775,
+      "output": "RED_CONFIRMED:actual_worker_violates_main_affinity_before_callback",
+      "sourceSHA256": "bb51f99d0867a7360fe93eb40cb64791b208e88bea0547a7b4d4ab6880099e63"
+    },
+    {
+      "case": "green",
+      "exitCode": 0,
+      "seconds": 37.49,
+      "output": "PASS:actual_worker_main_dispatch_error_completion_and_healthy_owner",
+      "sourceSHA256": "536b3c49a7fbc06387b3f304f56ac7153696278c48741a3346a162db1989e09c"
+    }
+  ],
+  "previousHarnessAttempt": {
+    "status": "timeout",
+    "reason": "测试程序静态初始化等待自身类锁；产品断言未执行，修正测试启动顺序后完成红绿验证。"
+  },
+  "aar": {
+    "sourceCommit": "2aa0c48fbe2fdbfa5348e37d02c8ff69733a6b98",
+    "toolVersion": "golang.org/x/mobile v0.0.0-20260908204917-8b95e45f8d3e Go1.26.4",
+    "exitCode": 0,
+    "seconds": 67.838,
+    "artifactSHA256": "562e1e7ffc9215f623420d05abb8b3d922bef3f80e4f80002ced66bdcc734f46",
+    "tests": "UNRUN"
+  },
+  "apk": {
+    "sha256": "0461c0dfeb1d0c2533ea7feb2869d565df3ba360eb1200ec4ad26624fbef8266",
+    "bytes": 96324400,
+    "package": "org.harmoniavault.harmonia_trial",
+    "nativeRuntime": "UNRUN_DELIVERABLE_BYTES"
+  },
+  "nativeFixtureAttempt": {
+    "package": "org.harmoniavault.harmonia_trial.productfixture",
+    "whole": "FAIL",
+    "stage": "syntheticBootstrap",
+    "fixedError": "DRIVER_EXITED",
+    "credentialInputs": 0,
+    "PINSet": false,
+    "authentication": "UNRUN",
+    "ordinaryUntrustedLogin": "UNRUN",
+    "formalLogout": "UNRUN",
+    "protectedArtifactsAbsent": "UNRUN",
+    "packagesCleaned": "PASS",
+    "serverCleanup": "PASS",
+    "newTaskAVDStopped": true,
+    "oldAVDUntouched": true,
+    "followup": "暂停于测试驱动启动阻塞；未重试或扩大诊断。"
+  },
+  "reusedEvidence": "普通初始化/变量CRUD/CLI批准以及Linux P5证据复用；本段未重跑。"
+}

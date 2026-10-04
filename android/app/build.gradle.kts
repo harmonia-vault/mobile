@@ -67,8 +67,17 @@ android {
 
     buildFeatures { buildConfig = true }
 
+    signingConfigs {
+        create("trialDebug") {
+            storeFile = file("../../build/native/trial-debug.jks")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
     buildTypes {
         debug {
+            signingConfig = signingConfigs.getByName("trialDebug")
             if (productFixture) {
                 applicationIdSuffix = ".productfixture"
                 buildConfigField("boolean", "HARMONIA_PRODUCT_FIXTURE", "true")
@@ -89,7 +98,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "org.harmoniavault.harmonia_mobile"
+        applicationId = "org.harmoniavault.harmonia_trial"
         buildConfigField("boolean", "HARMONIA_PRODUCT_FIXTURE", "false")
         buildConfigField("String", "HARMONIA_FIXTURE_ENDPOINT", "\"\"")
         buildConfigField("String", "HARMONIA_FIXTURE_CA_BASE64", "\"\"")

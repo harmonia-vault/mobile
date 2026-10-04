@@ -217,13 +217,18 @@ class NativeBridgePlugin internal constructor(
     }
 
     private fun pinMethod(call: MethodCall, result: MethodChannel.Result) {
-        pendingPairingsDispatcher.invalidate(); resetMailDispatcher.invalidate(); dagBusinessDispatcher.invalidate(); dagEnvironmentDispatcher.invalidate()
+        val informationOnly = call.method == "localProtectionInfo"
+        if (!informationOnly) {
+            pendingPairingsDispatcher.invalidate(); resetMailDispatcher.invalidate(); dagBusinessDispatcher.invalidate(); dagEnvironmentDispatcher.invalidate()
+        }
         val request = try { PinChannelRequest.parse(call.method, call.arguments) }
             catch (_: Exception) { invalid(result); return }
         if (!acceptsEndpoint(request.endpoint)) { request.close(); invalid(result); return }
-        // PIN业务不接DAG owner，任一模式切换/forget前先撤销本槽DAG RAM。
-        dagDispatcher.invalidate()
-        resetDispatcher.invalidate()
+        // 健康状态投影保留跨认证RAM owner；PIN业务/模式切换/forget仍先撤销。
+        if (!informationOnly) {
+            dagDispatcher.invalidate()
+            resetDispatcher.invalidate()
+        }
         if (!acquire(result)) { request.close(); return }
         pendingPIN = request
         worker.execute {
@@ -233,7 +238,6 @@ class NativeBridgePlugin internal constructor(
                 check(!disposed)
                 finish(result, value)
             } catch (failure: PinLocalException) {
-                recoveryRegistry.clear()
                 val code = when (failure.fault) {
                     PinLocalFault.BUSY -> "BUSY"
                     PinLocalFault.CONFIGURATION -> "INVALID_COMMAND"
@@ -244,13 +248,39 @@ class NativeBridgePlugin internal constructor(
                     PinLocalFault.CLOSED -> "PIN_BLOCKED"
                     PinLocalFault.BLOCKED -> "PIN_BLOCKED"
                 }
-                finish(result, code = code)
-            } catch (_: Exception) { recoveryRegistry.clear(); finish(result, code = "PIN_BLOCKED") }
+                if (informationOnly) failProtectionInfo(result, code)
+                else { recoveryRegistry.clear(); finish(result, code = code) }
+            } catch (_: Exception) {
+                if (informationOnly) failProtectionInfo(result, "PIN_BLOCKED")
+                else { recoveryRegistry.clear(); finish(result, code = "PIN_BLOCKED") }
+            }
             finally {
                 request.close(); if (pendingPIN === request) pendingPIN = null
-                recoveryRegistry.clear() // native slot/provider已排空，才同步清钥。
+                if (!informationOnly) recoveryRegistry.clear() // native slot/provider已排空，才同步清钥。
             }
         }
+    }
+
+    // worker不能调用具有主线程约束的dispatcher；错误回传须晚于全部失效尝试。
+    private fun failProtectionInfo(result: MethodChannel.Result, code: String) {
+        if (!main.post {
+            var failure = code
+            listOf<() -> Unit>(
+                { pendingPairingsDispatcher.invalidate() },
+                { resetMailDispatcher.invalidate() },
+                { dagBusinessDispatcher.invalidate() },
+                { dagEnvironmentDispatcher.invalidate() },
+                { dagDispatcher.invalidate() },
+                { resetDispatcher.invalidate() },
+                { recoveryRegistry.clear() },
+            ).forEach { retire ->
+                try { retire() } catch (_: Exception) {
+                    ownerCleanupUnconfirmed.set(true)
+                    failure = "LOCAL_PROTECTION_PERSISTENCE"
+                }
+            }
+            finish(result, code = failure)
+        }) ownerCleanupUnconfirmed.set(true)
     }
 
     private fun deliverTyped(result: MethodChannel.Result, value: String?, error: String?) {
