@@ -57,6 +57,7 @@ internal class NativeAccountResetDispatcher(
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
     private val cleanup = NativeDAGCleanup()
+    private val cancelDrain = NativeOwnerDrainBarrier()
     @Volatile private var record: Record? = null
     @Volatile private var operation: Operation? = null
     @Volatile private var disposed = false
@@ -68,13 +69,20 @@ internal class NativeAccountResetDispatcher(
         onRetired = { retireNative() },
     )
     private fun mainThread() { check(Looper.myLooper() === Looper.getMainLooper()) }
-    fun isBusy() = operation != null
+    fun isBusy() = operation != null || cancelDrain.isDraining()
+    fun hasOwner() = record != null
     fun onResumed(deviceUnlocked: Boolean) { mainThread(); foreground = true; unlocked = deviceUnlocked; lifecycle.onResumed(deviceUnlocked); tryStartAuthenticated() }
     fun onPaused() { mainThread(); foreground = false; lifecycle.onPaused() }
     fun onStopped() { mainThread(); foreground = false; lifecycle.onStopped() }
     fun onUserLeaveHint() { mainThread(); foreground = false; unlocked = false; lifecycle.onUserLeaveHint() }
     fun onScreenOff() { mainThread(); foreground = false; unlocked = false; lifecycle.onScreenOff() }
     fun invalidate() { mainThread(); lifecycle.invalidate() }
+    fun cancelAndDrain(completion: (String?) -> Unit) {
+        mainThread()
+        if (!cancelDrain.begin(completion)) { completion("BUSY"); return }
+        invalidate()
+        if (operation == null) cancelDrain.finish(if (cleanup.unconfirmed) "LOCAL_PROTECTION_PERSISTENCE" else null)
+    }
 
     private fun alive(op: Operation): Boolean = !disposed && !cleanup.unconfirmed && !op.retired && operation === op &&
         foreground && unlocked && lifecycle.platformEpoch() == op.epoch && SystemClock.elapsedRealtime() < op.deadline &&
@@ -278,6 +286,7 @@ internal class NativeAccountResetDispatcher(
                 if (!active && op.ticket != null) lifecycle.invalidate()
                 val allowed = error == null && active
                 if (operation === op) operation = null
+                cancelDrain.finish(if (cleanup.unconfirmed) "LOCAL_PROTECTION_PERSISTENCE" else null)
                 val fixed = if (cleanup.unconfirmed) "LOCAL_PROTECTION_PERSISTENCE" else error ?: "LOCKED"
                 op.completion.complete(if (allowed) value else null, if (allowed) null else fixed)
         }, after = { if (disposed) worker.shutdown() })

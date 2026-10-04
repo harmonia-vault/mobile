@@ -38,6 +38,8 @@ class NativeBridgePlugin internal constructor(
     private val worker = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private val busy = AtomicBoolean(false)
+    private val endpointScope = NativeControlledEndpointScope()
+    private val ownerCleanupUnconfirmed = AtomicBoolean(false)
     // 仅本插件进程持有；Go内部随机instance/handle/EdOwner不跨MethodChannel或磁盘。
     private val recoveryRegistry = Mobilebridge.newRecoveryRegistry(activity.packageName, workflowFilename)
     private var cancellation: CancellationSignal? = null
@@ -52,28 +54,54 @@ class NativeBridgePlugin internal constructor(
         { store.hasArtifacts() || ProtectedWorkflowStore(activity, workflowFilename).hasArtifacts() },
         { recoveryRegistry.invalidate() }, { nativeCertificates() }, pinOwnerGate::register)
 
-    // 封闭 native-only DAG consumer：不注册MethodChannel，普通/Flutter cap不变。
+    // 严格 typed 原生入口；编译能力与逐项独立运行证据分开，whole ready仍关闭。
     private val dagDispatcher: NativeDAGRecoveryDispatcher = NativeDAGRecoveryDispatcher(activity, this.store, workflowFilename,
-        ::nativeCertificates, ::acceptsEndpoint, { !disposed && !busy.get() && !resetDispatcher.isBusy() }, pinDispatcher::hasArtifacts)
+        ::nativeCertificates, ::acceptsEndpoint, { !disposed && !ownerCleanupUnconfirmed.get() && !busy.get() && !resetDispatcher.isBusy() && !pendingPairingsBusy() && !mailBusy() }, pinDispatcher::hasArtifacts, endpointScope::workflowOpened)
+    private val pendingPairingsDispatcher: NativePendingPairingsDispatcher = NativePendingPairingsDispatcher(activity, this.store, workflowFilename,
+        ::nativeCertificates, ::acceptsEndpoint, { !disposed && !ownerCleanupUnconfirmed.get() && !busy.get() && !dagDispatcher.isBusy() && !resetDispatcher.isBusy() && !mailBusy() }, pinDispatcher::hasArtifacts, endpointScope::workflowOpened)
+    private val resetMailDispatcher: NativeAccountResetMailDispatcher = NativeAccountResetMailDispatcher(activity, workflowFilename,
+        ::nativeCertificates, ::acceptsEndpoint, { !disposed && !ownerCleanupUnconfirmed.get() && !busy.get() && !dagDispatcher.isBusy() && !pendingPairingsBusy() && !resetDispatcher.isBusy() && !resetDispatcher.hasOwner() })
     private val resetDispatcher: NativeAccountResetDispatcher = NativeAccountResetDispatcher(activity, this.store, workflowFilename,
-        ::nativeCertificates, ::acceptsEndpoint, { !disposed && !busy.get() && !dagDispatcher.isBusy() },
-        pinDispatcher::hasArtifacts, { recoveryRegistry.clear() }, { endpoint, completed ->
-            // 既有 cancel completion 在 DAG worker 的 registry.Close/owner release 之后交付。
-            val command = JSONObject(mapOf("version" to 1, "operation" to "cancelDAGRecoveryOwner", "endpoint" to endpoint)).toString()
-            dagDispatcher.execute(command, ByteArray(0)) { _, error -> completed(error) }
-        })
-    internal fun executeNativeDAG(command: String, code: ByteArray, completion: NativeDAGRecoveryDispatcher.Completion) = dagDispatcher.execute(command, code, completion)
+        ::nativeCertificates, ::acceptsEndpoint, { !disposed && !ownerCleanupUnconfirmed.get() && !busy.get() && !dagDispatcher.isBusy() && !pendingPairingsBusy() && !mailBusy() },
+        pinDispatcher::hasArtifacts, { recoveryRegistry.clear() }, ::drainOwnersForReset)
+    private fun pendingPairingsBusy() = pendingPairingsDispatcher.isBusy()
+    private fun mailBusy() = resetMailDispatcher.isBusy()
+
+    /** Query成功后才调用。每个 owner 精确退休；普通 worker fence在其 finally 清钥之后。 */
+    private fun drainOwnersForReset(endpoint: String, completed: (String?) -> Unit) {
+        NativeOwnerDrainBarrier.all(listOf(
+            { done -> pendingPairingsDispatcher.cancelAndDrain(done) },
+            { done -> resetMailDispatcher.cancelAndDrain(done) },
+            { done ->
+                worker.execute {
+                    val error = try { recoveryRegistry.clear(); null } catch (_: Exception) { "LOCAL_PROTECTION_PERSISTENCE" }
+                    check(main.post { done(error) })
+                }
+            },
+            { done ->
+                val command = JSONObject(mapOf("version" to 1, "operation" to "cancelDAGRecoveryOwner", "endpoint" to endpoint)).toString()
+                dagDispatcher.execute(command, ByteArray(0)) { _, error -> done(error) }
+            },
+        )) { error ->
+            if (error == "LOCAL_PROTECTION_PERSISTENCE") ownerCleanupUnconfirmed.set(true)
+            completed(error)
+        }
+    }
+    internal fun executeNativeDAG(command: String, code: ByteArray, completion: NativeDAGRecoveryDispatcher.Completion) {
+        pendingPairingsDispatcher.invalidate(); resetMailDispatcher.invalidate()
+        dagDispatcher.execute(command, code, completion)
+    }
     internal fun beginNativeAccountReset(endpoint: String, proof: ByteArray, completion: NativeAccountResetDispatcher.Completion) = resetDispatcher.begin(endpoint, proof, completion)
     internal fun queryOnlyNativeAccountReset(endpoint: String, proof: ByteArray, completion: NativeAccountResetDispatcher.Completion) = resetDispatcher.beginQueryOnly(endpoint, proof, completion)
     internal fun queryNativeAccountReset(completion: NativeAccountResetDispatcher.Completion) = resetDispatcher.query(completion)
     internal fun prepareNativeAccountReset(password: ByteArray, confirmation: String, completion: NativeAccountResetDispatcher.Completion) = resetDispatcher.prepare(password, confirmation, completion)
     internal fun completeNativeAccountReset(completion: NativeAccountResetDispatcher.Completion) = resetDispatcher.complete(completion)
     internal fun cancelNativeAccountReset() = resetDispatcher.invalidate()
-    internal fun onHostResumed(deviceUnlocked: Boolean) { dagDispatcher.onResumed(deviceUnlocked); resetDispatcher.onResumed(deviceUnlocked) }
-    internal fun onHostPaused() { dagDispatcher.onPaused(); resetDispatcher.onPaused() }
-    internal fun onHostStopped() { dagDispatcher.onStopped(); resetDispatcher.onStopped() }
-    internal fun onHostUserLeaveHint() { dagDispatcher.onUserLeaveHint(); resetDispatcher.onUserLeaveHint() }
-    internal fun onHostScreenOff() { dagDispatcher.onScreenOff(); resetDispatcher.onScreenOff() }
+    internal fun onHostResumed(deviceUnlocked: Boolean) { dagDispatcher.onResumed(deviceUnlocked); resetDispatcher.onResumed(deviceUnlocked); pendingPairingsDispatcher.onResumed(deviceUnlocked); resetMailDispatcher.onResumed(deviceUnlocked) }
+    internal fun onHostPaused() { dagDispatcher.onPaused(); resetDispatcher.onPaused(); pendingPairingsDispatcher.onPaused(); resetMailDispatcher.onPaused() }
+    internal fun onHostStopped() { dagDispatcher.onStopped(); resetDispatcher.onStopped(); pendingPairingsDispatcher.onStopped(); resetMailDispatcher.onStopped() }
+    internal fun onHostUserLeaveHint() { dagDispatcher.onUserLeaveHint(); resetDispatcher.onUserLeaveHint(); pendingPairingsDispatcher.onUserLeaveHint(); resetMailDispatcher.onUserLeaveHint() }
+    internal fun onHostScreenOff() { dagDispatcher.onScreenOff(); resetDispatcher.onScreenOff(); pendingPairingsDispatcher.onScreenOff(); resetMailDispatcher.onScreenOff() }
 
     init {
         check(productFixture == null || additionalCA.contentEquals(productFixture.publicCA()))
@@ -81,8 +109,14 @@ class NativeBridgePlugin internal constructor(
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        // 字节请求先经过消费解析；关闭/格式失败也清理传入缓冲。
+        if (call.method == "executeDAGRecovery") { dagRecoveryMethod(call, result); return }
+        if (call.method in NativeAccountResetChannelRequest.METHODS) { accountResetMethod(call, result); return }
         if (disposed) { result.error("LOCKED", "原生桥已关闭。", null); return }
         if (call.method in PinMethodChannelDispatcher.METHODS) { pinMethod(call, result); return }
+        if (call.method in setOf("createDevice", "executeApproval", "executeEnrollment", "executeWorkflow", "executeUnlocked")) {
+            pendingPairingsDispatcher.invalidate(); resetMailDispatcher.invalidate()
+        }
         when (call.method) {
             "fixtureConnectionInfo" -> {
                 if (call.arguments != null) { invalid(result); return }
@@ -98,6 +132,9 @@ class NativeBridgePlugin internal constructor(
                         "appPINDeviceExists" to pinExists,
                         // 仅表示PIN业务ABI已接入；资格/受保护状态/逐项证据仍另行检查。
                         "appPINWorkflowReady" to true,
+                        "nativeDAGOwnerCancellation" to true,
+                        "nativePendingPairingRequestsV3" to true, "nativePendingPairingRequestsV4" to true,
+                        "nativeAccountReset" to true, "nativeAccountResetEmailRequest" to true,
                         "realVaultReady" to false, "softwareDeviceKeys" to true))
                 } catch (_: Exception) { recoveryRegistry.clear(); result.error("LOCAL_PROTECTION_STATE", "本机保护状态不可用。", null) }
             }
@@ -115,6 +152,18 @@ class NativeBridgePlugin internal constructor(
             "workflowProfile" -> {
                 if (call.arguments != null) { invalid(result); return }
                 runWorker(result) { Mobilebridge.workflowProfile() }
+            }
+            "dagWorkflowProfile" -> {
+                if (call.arguments != null) { invalid(result); return }
+                runWorker(result) { Mobilebridge.dagWorkflowProfile() }
+            }
+            "executePendingPairings" -> {
+                if (ownerCleanupUnconfirmed.get()) { deliverTyped(result, null, "LOCAL_PROTECTION_PERSISTENCE"); return }
+                val request = try { NativePendingPairingsChannelRequest.parse(call.arguments) }
+                    catch (_: Exception) { invalid(result); return }
+                pendingPairingsDispatcher.execute(request) { value, error ->
+                    if (!disposed) deliverTyped(result, value, error)
+                }
             }
             "executeApproval", "executeEnrollment" -> {
                 val args = call.arguments as? Map<*, *>
@@ -146,6 +195,7 @@ class NativeBridgePlugin internal constructor(
     }
 
     private fun pinMethod(call: MethodCall, result: MethodChannel.Result) {
+        pendingPairingsDispatcher.invalidate(); resetMailDispatcher.invalidate()
         val request = try { PinChannelRequest.parse(call.method, call.arguments) }
             catch (_: Exception) { invalid(result); return }
         if (!acceptsEndpoint(request.endpoint)) { request.close(); invalid(result); return }
@@ -181,16 +231,73 @@ class NativeBridgePlugin internal constructor(
         }
     }
 
-    private fun acceptsEndpoint(endpoint: String): Boolean = productFixture?.acceptsEndpoint(endpoint) ?: true
+    private fun deliverTyped(result: MethodChannel.Result, value: String?, error: String?) {
+        if (error == "LOCAL_PROTECTION_PERSISTENCE") ownerCleanupUnconfirmed.set(true)
+        if (error == null) result.success(value) else result.error(error, "原生安全操作未完成。", null)
+    }
+    private fun dagRecoveryMethod(call: MethodCall, result: MethodChannel.Result) {
+        val request = try { NativeDAGChannelRequest.parse(call.arguments) } catch (_: Exception) { invalid(result); return }
+        request.use {
+            if (disposed) { result.error("LOCKED", "原生桥已关闭。", null); return }
+            if (ownerCleanupUnconfirmed.get()) { deliverTyped(result, null, "LOCAL_PROTECTION_PERSISTENCE"); return }
+            try { Mobilebridge.validateDAGRecoveryCommand(request.command, request.completeCode.size.toLong()) }
+            catch (_: Exception) { invalid(result); return }
+            if (!acceptsWorkflowEndpoint(request.command)) { invalid(result); return }
+            val once = AtomicBoolean()
+            executeNativeDAG(request.command, request.completeCode) { value, error ->
+                if (once.compareAndSet(false, true) && !disposed) deliverTyped(result, value, error)
+            }
+        }
+    }
+    private fun accountResetMethod(call: MethodCall, result: MethodChannel.Result) {
+        val request = try { NativeAccountResetChannelRequest.parse(call.method, call.arguments) }
+            catch (_: Exception) { invalid(result); return }
+        request.use {
+            if (disposed) { result.error("LOCKED", "原生桥已关闭。", null); return }
+            if (ownerCleanupUnconfirmed.get() && request.method != "cancelAccountReset") { deliverTyped(result, null, "LOCAL_PROTECTION_PERSISTENCE"); return }
+            if (request.endpoint.isNotEmpty()) {
+                // BUSY拒绝不能在cold状态先固定另一地址，影响已在等待认证的opener。
+                if (busy.get() || dagDispatcher.isBusy() || pendingPairingsBusy() || mailBusy() || resetDispatcher.isBusy() ||
+                    (request.method == "requestAccountResetEmail" && resetDispatcher.hasOwner())) {
+                    deliverTyped(result, null, "BUSY"); return
+                }
+                try {
+                    val canonical = JSONObject(Mobilebridge.executePublic(JSONObject(mapOf("version" to 1, "operation" to "validateEndpoint", "endpoint" to request.endpoint)).toString())).getString("endpoint")
+                    if (canonical != request.endpoint || !acceptsEndpoint(request.endpoint) || !endpointScope.claimResetFlow(request.endpoint)) { invalid(result); return }
+                } catch (_: Exception) { invalid(result); return }
+            }
+            val once = AtomicBoolean()
+            val completion = NativeAccountResetDispatcher.Completion { value, error ->
+                if (once.compareAndSet(false, true) && !disposed) deliverTyped(result, value, error)
+            }
+            when (request.method) {
+                "requestAccountResetEmail" -> resetMailDispatcher.execute(request.endpoint, request.takeInput()) { value, error -> completion.complete(value, error) }
+                "beginAccountReset" -> resetDispatcher.begin(request.endpoint, request.takeInput(), completion)
+                "beginAccountResetQueryOnly" -> resetDispatcher.beginQueryOnly(request.endpoint, request.takeInput(), completion)
+                "queryAccountReset" -> resetDispatcher.query(completion)
+                "prepareAccountReset" -> resetDispatcher.prepare(request.takeInput(), request.confirmation, completion)
+                "completeAccountReset" -> resetDispatcher.complete(completion)
+                "cancelAccountReset" -> NativeOwnerDrainBarrier.all(listOf(
+                    { done -> resetMailDispatcher.cancelAndDrain(done) },
+                    { done -> resetDispatcher.cancelAndDrain(done) },
+                )) { error ->
+                    if (error == null) endpointScope.releaseResetFlow(!busy.get() && !dagDispatcher.hasOwner() && !pendingPairingsBusy())
+                    completion.complete(null, error)
+                }
+            }
+        }
+    }
 
-    private fun acceptsWorkflowEndpoint(command: String): Boolean = productFixture?.let { fixture ->
-        try { fixture.acceptsEndpoint(JSONObject(command).getString("endpoint")) }
-        catch (_: Exception) { false }
-    } ?: true
+    private fun acceptsEndpoint(endpoint: String): Boolean = endpointScope.accepts(endpoint) && (productFixture?.acceptsEndpoint(endpoint) ?: true)
+
+    private fun acceptsWorkflowEndpoint(command: String): Boolean = try {
+        acceptsEndpoint(JSONObject(command).getString("endpoint"))
+    } catch (_: Exception) { false }
 
     private fun invalid(result: MethodChannel.Result) = result.error("INVALID_COMMAND", "原生业务请求不符合协议。", null)
     private fun acquire(result: MethodChannel.Result): Boolean {
-        if (dagDispatcher.isBusy() || resetDispatcher.isBusy() || !busy.compareAndSet(false, true)) { result.error("BUSY", "已有原生业务操作正在进行。", null); return false }
+        if (ownerCleanupUnconfirmed.get()) { result.error("LOCAL_PROTECTION_PERSISTENCE", "本机资源排空未确认。", null); return false }
+        if (dagDispatcher.isBusy() || resetDispatcher.isBusy() || pendingPairingsBusy() || mailBusy() || !busy.compareAndSet(false, true)) { result.error("BUSY", "已有原生业务操作正在进行。", null); return false }
         return true
     }
     private fun finish(result: MethodChannel.Result, value: Any? = null, code: String? = null) {
@@ -311,6 +418,7 @@ class NativeBridgePlugin internal constructor(
                                         val flow = device.openAtomicWorkflow(endpoint, protected.namespace, state, nativeCertificates(), writer)
                                         activeWorkflow = flow
                                         try {
+                                            endpointScope.workflowOpened(endpoint)
                                             check(!disposed)
                                             flow.attachRecoveryRegistry(recoveryRegistry)
                                             response = when {
@@ -332,7 +440,16 @@ class NativeBridgePlugin internal constructor(
                                 try { device?.close() } catch (_: Exception) { failureCode = "GO_OR_KEYSTORE_REJECTED" }
                                 if (!releaseOwner()) failureCode = "LOCAL_PROTECTION_PERSISTENCE"
                             }
-                            finish(result, response, failureCode)
+                            val logout = workflow && try { JSONObject(command!!).getString("operation") == "logout" } catch (_: Exception) { false }
+                            if (logout && failureCode == null) {
+                                val value = response
+                                check(main.post {
+                                    drainOwnersForReset(JSONObject(command!!).getString("endpoint")) { error ->
+                                        if (error == null && value is String && JSONObject(value).optBoolean("ok", false)) endpointScope.releaseAfterLogoutDrain()
+                                        finish(result, value, error)
+                                    }
+                                })
+                            } else finish(result, response, failureCode)
                         }
                     }
                 })
@@ -361,6 +478,9 @@ class NativeBridgePlugin internal constructor(
     fun dispose() {
         // 所有owner分别尝试关闭；某一取消失败也不能阻止其它输入/通道退役。
         var failed = false
+        endpointScope.dispose()
+        try { resetMailDispatcher.dispose() } catch (_: Exception) { failed = true }
+        try { pendingPairingsDispatcher.dispose() } catch (_: Exception) { failed = true }
         try { dagDispatcher.dispose() } catch (_: Exception) { failed = true }
         try { resetDispatcher.dispose() } catch (_: Exception) { failed = true }
         try { pinOwnerGate.retire { disposed = true } } catch (_: Exception) { failed = true }

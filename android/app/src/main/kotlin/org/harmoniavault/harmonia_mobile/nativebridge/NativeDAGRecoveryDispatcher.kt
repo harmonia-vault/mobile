@@ -14,7 +14,7 @@ import org.json.JSONObject
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** 封闭的 native B1/B2 路径；没有 MethodChannel 注册、Flutter profile 或 caller auth bool。 */
+/** 受原生认证与 owner 排空约束的 DAG 路径；不接受调用方认证结果或本地槽参数。 */
 internal class NativeDAGRecoveryDispatcher(
     private val activity: Activity,
     private val store: ProtectedDeviceStore,
@@ -23,6 +23,7 @@ internal class NativeDAGRecoveryDispatcher(
     private val acceptsEndpoint: (String) -> Boolean,
     private val ordinaryIdle: () -> Boolean,
     private val hasPINArtifacts: () -> Boolean,
+    private val workflowOpened: (String) -> Unit = {},
 ) {
     internal fun interface Completion { fun complete(value: String?, fixedError: String?) }
     private class RegistryRecord(val epoch: Long, val endpoint: String, val registry: NativeDAGRegistry)
@@ -61,13 +62,15 @@ internal class NativeDAGRecoveryDispatcher(
     private val cancellationCompletions = mutableListOf<Completion>()
     @Volatile private var disposed = false
     private val cleanup = NativeDAGCleanup()
+    private val admission = NativeDAGAdmissionGate()
     private val lifecycle = NativeSlotLifecycle(
         { SystemClock.elapsedRealtime() },
         { delay, action -> val runnable = Runnable { action() }; check(main.postDelayed(runnable, delay)); NativeSlotTimer { main.removeCallbacks(runnable) } },
         onRetired = ::retired,
     )
     private fun mainThread() { check(Looper.myLooper() === Looper.getMainLooper()) }
-    fun isBusy(): Boolean = synchronized(gate) { operation != null }
+    fun isBusy(): Boolean = admission.busy() || cleanup.unconfirmed
+    fun hasOwner(): Boolean = synchronized(gate) { record != null } || isBusy()
     fun onResumed(deviceUnlocked: Boolean) { mainThread(); lifecycle.onResumed(deviceUnlocked); tryStart() }
     fun onPaused() { mainThread(); lifecycle.onPaused() }
     fun onStopped() { mainThread(); lifecycle.onStopped() }
@@ -84,8 +87,9 @@ internal class NativeDAGRecoveryDispatcher(
             val endpointMatches = synchronized(gate) { record?.endpoint?.let { it == request.endpoint } ?: (operation?.request?.endpoint?.let { it == request.endpoint } ?: true) }
             if (!endpointMatches) { request.close(); completion.complete(null, "INVALID_COMMAND"); return }
             cancellationCompletions += completion
+            admission.cancellationBegan()
             lifecycle.invalidate(); request.close()
-            if (!isBusy()) worker.execute { main.post { finishCancellations(null) } }
+            if (!admission.operationActive()) queueRegistryDrain { /* 同一队列空fence也须worker→main确认。 */ }
             return
         }
         if (!ordinaryIdle() || isBusy()) { request.close(); completion.complete(null, "BUSY"); return }
@@ -94,7 +98,7 @@ internal class NativeDAGRecoveryDispatcher(
         } catch (_: Exception) { request.close(); lifecycle.invalidate(); completion.complete(null, "AUTH_UNAVAILABLE"); return }
         val epoch = try { lifecycle.platformEpoch() } catch (_: Exception) { request.close(); completion.complete(null, "LOCKED"); return }
         val op = Operation(request, epoch, completion)
-        synchronized(gate) { check(operation == null); operation = op }
+        synchronized(gate) { check(operation == null); admission.operationBegan(); operation = op }
         try {
             val owner = NativeSlotOwner.acquire(activity, workflowFilename, store.nativeFilename, store.nativeAlias)
             op.owner = owner
@@ -171,6 +175,7 @@ internal class NativeDAGRecoveryDispatcher(
             state = protected.load()
             val flow = device.openAtomicWorkflow(op.request.endpoint, protected.namespace, state, certificates(), protected)
             op.flow = flow
+            workflowOpened(op.request.endpoint)
             flow.attachDAGRegistry(registry(op))
             check(alive(op, permit))
             response = flow.executeDAGRecovery(op.request.command, op.request.code)
@@ -213,9 +218,7 @@ internal class NativeDAGRecoveryDispatcher(
             { oldOperation?.flow?.invalidate() }, { oldRecord?.registry?.invalidate() },
             { oldOperation?.owner?.retire() }, { oldOperation?.signal?.cancel() },
         ).forEach { action -> cleanup.attempt(action) }
-        if (oldRecord != null) worker.execute {
-            cleanup.attempt { oldRecord.registry.close() }
-        }
+        if (oldRecord != null) queueRegistryDrain { oldRecord.registry.close() }
         if (oldOperation != null && !oldOperation.workerStarted) fail(oldOperation, oldOperation.fixedFailure)
     }
     private fun fail(op: Operation, error: String) {
@@ -236,17 +239,37 @@ internal class NativeDAGRecoveryDispatcher(
                 // complete 已 disarm timer；慢释放跨截止仍须退休原 RAM owner，保留 journal。
                 if (!allowed && !op.retired) lifecycle.invalidate()
                 if (op.completed.compareAndSet(false, true)) {
-                    synchronized(gate) { if (operation === op) operation = null }
+                    synchronized(gate) { if (operation === op) { operation = null; admission.operationEnded() } }
                     try { op.completion.complete(if (allowed) value else null, if (allowed) null else outcome ?: "LOCKED") }
                     finally {
                         finishCancellations(outcome?.takeIf { it == "LOCAL_PROTECTION_PERSISTENCE" })
-                        if (disposed) worker.shutdown()
+                        if (disposed && admission.canFinishCancellation()) worker.shutdown()
                     }
                 }
             }
         }
     }
+    /** 每个close/fence从排队前即阻止新owner；只有worker完毕且main确认才释放。 */
+    private fun queueRegistryDrain(action: () -> Unit) {
+        val ticket = admission.drainBegan()
+        try {
+            worker.execute {
+                cleanup.attempt(action)
+                if (!main.post {
+                    admission.drainEnded(ticket)
+                    finishCancellations(null)
+                    if (disposed && admission.canFinishCancellation()) worker.shutdown()
+                }) cleanup.attempt { error("DAG main drain unconfirmed") }
+            }
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            cleanup.attempt { error("DAG worker drain unconfirmed") }
+            admission.drainEnded(ticket)
+            finishCancellations("LOCAL_PROTECTION_PERSISTENCE")
+        }
+    }
     private fun finishCancellations(error: String?) {
+        if (!admission.canFinishCancellation()) return
+        admission.cancellationEnded()
         val callbacks = cancellationCompletions.toList(); cancellationCompletions.clear()
         val fixedError = if (cleanup.unconfirmed) "LOCAL_PROTECTION_PERSISTENCE" else error
         val result = "{\"version\":1,\"operation\":\"cancelDAGRecoveryOwner\",\"localOwnerClosed\":true,\"journalPreserved\":true,\"trustedDevice\":false}"
@@ -256,6 +279,6 @@ internal class NativeDAGRecoveryDispatcher(
         mainThread(); if (disposed) return
         disposed = true; lifecycle.dispose()
         // 已排队的取消/Close和owner释放继续完成，不能shutdownNow丢弃清理。
-        if (!isBusy()) worker.shutdown()
+        if (admission.canFinishCancellation()) worker.shutdown()
     }
 }
