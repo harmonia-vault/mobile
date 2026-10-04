@@ -282,6 +282,50 @@ void main() {
     }
   });
 
+  for (final unavailable in ['NO_SYSTEM_AUTH', 'BLOCKED']) {
+    test('system $unavailable retires plaintext until authenticated restore', () async {
+      final port = PINPortFixture()..deviceExists = true;
+      var systemCapability = 'SYSTEM_READY';
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        expect(call.method, 'localProtectionInfo');
+        return {
+          ...status(mode: 'system', exists: true),
+          'systemCapability': systemCapability,
+        };
+      });
+      final value = await gateway(port);
+      final controller = VaultController(gateway: value);
+      await controller.initialize();
+      await controller.connectServer(endpoint);
+      await controller.unlockSavedDevice();
+      expect(controller.canEnterVault, isTrue);
+      expect(controller.environments, isNotEmpty);
+      await controller.refreshLocalProtection();
+      expect(controller.canEnterVault, isTrue);
+      final callsBefore = port.calls.length;
+
+      systemCapability = unavailable;
+      await controller.refreshLocalProtection();
+      // Native mode stays system: losing system auth must not enable PIN.
+      expect(controller.localProtectionStatus!.mode, LocalProtectionMode.system);
+      expect(controller.localProtectionStatus!.pinSetupAvailable, isFalse);
+      expect(value.capabilities, isEmpty);
+      expect(controller.canEnterVault, isFalse);
+      expect(controller.environments, isEmpty);
+      expect(controller.devices, isEmpty);
+      expect(controller.checkpoint, 0);
+      expect(controller.navigate(VaultPage.environments), isFalse);
+
+      // A read-only capability recovery cannot resurrect the previous view.
+      systemCapability = 'SYSTEM_READY';
+      await controller.refreshLocalProtection();
+      expect(controller.canEnterVault, isFalse);
+      expect(controller.environments, isEmpty);
+      expect(port.calls.length, callsBefore);
+      controller.dispose();
+    });
+  }
+
   test('protection state failure hides cached plaintext and cannot fall back after known PIN', () async {
     final port = PINPortFixture();
     var phase = 'missing';

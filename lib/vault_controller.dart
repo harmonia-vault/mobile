@@ -1505,7 +1505,11 @@ class VaultController extends ChangeNotifier
     }
     final status = localProtectionStatus;
     if (status?.upgradeRequired == true ||
-        status?.mode == LocalProtectionMode.blocked) {
+        status?.mode == LocalProtectionMode.blocked ||
+        status?.mode == LocalProtectionMode.system &&
+            status?.systemCapability != 'SYSTEM_READY') {
+      // 原生保留system模式防止降级；它不代表系统认证仍可用。
+      // 只读状态恢复不能重新打开旧视图，仍须显式认证与同流Pull。
       _suspendVault();
     }
   });
