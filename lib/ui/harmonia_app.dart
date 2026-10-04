@@ -6,6 +6,11 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 
 import '../native/native_pin_adapter.dart' show LocalProtectionGateway;
 import '../vault_controller.dart';
+import '../navigation/vault_route_projection.dart';
+import '../pairing/pending_pairing_presentation.dart';
+import 'management_ui.dart';
+import 'pending_pairing_ui.dart';
+import 'account_reset_ui.dart';
 import '../security/sensitive_input_guard.dart';
 import 'design_system.dart';
 import 'local_pin_ui.dart';
@@ -146,7 +151,7 @@ String _time(DateTime t) {
 }
 
 String _locKey(VaultLocation l) =>
-    '${l.page.name}/${l.environmentId}/${l.deviceId}/${l.requestId}';
+    '${l.page.name}/${l.environmentId}/${l.deviceId}/${l.requestId}/${l.pairingId}';
 
 IconData _platformIcon(String p) =>
     RegExp('android|ios', caseSensitive: false).hasMatch(p)
@@ -202,6 +207,9 @@ const _titles = {
   VaultPage.variableEditor: '编辑变量',
   VaultPage.devices: '设备',
   VaultPage.deviceDetail: '设备详情',
+  VaultPage.deviceManagement: '设备权限管理',
+  VaultPage.pendingPairingDetail: '配对请求',
+  VaultPage.accountReset: '账号重置',
   VaultPage.approval: '批准设备',
   VaultPage.settings: '设置',
   VaultPage.accountSecurity: '账号安全',
@@ -212,7 +220,8 @@ int? _tabOf(VaultPage p) => switch (p) {
   VaultPage.environments ||
   VaultPage.environmentDetail ||
   VaultPage.variableEditor => 0,
-  VaultPage.devices || VaultPage.deviceDetail || VaultPage.approval => 1,
+  VaultPage.devices || VaultPage.deviceDetail || VaultPage.deviceManagement ||
+  VaultPage.pendingPairingDetail || VaultPage.approval => 1,
   VaultPage.settings ||
   VaultPage.accountSecurity ||
   VaultPage.recoveryManagement => 2,
@@ -220,27 +229,7 @@ int? _tabOf(VaultPage p) => switch (p) {
 };
 
 /// The session stage gates which pages may render; null means vault locked.
-VaultPage? _resolve(VaultController c) {
-  final p = c.location.page;
-  return switch (c.sessionStage) {
-    SessionStage.signedOut =>
-      const {
-            VaultPage.login,
-            VaultPage.registration,
-            VaultPage.emailProof,
-            VaultPage.recovery,
-          }.contains(p)
-          ? p
-          : VaultPage.entry,
-    SessionStage.deviceAuthorization =>
-      p == VaultPage.initialization ? p : VaultPage.authorization,
-    SessionStage.restrictedRecovery => VaultPage.recovery,
-    SessionStage.trusted || SessionStage.preview =>
-      !c.canEnterVault
-          ? null
-          : (_tabOf(p) == null ? VaultPage.environments : p),
-  };
-}
+VaultPage? _resolve(VaultController c) => projectVaultPage(c);
 
 Widget _body(VaultController c, VaultPage? p) {
   final l = c.location;
@@ -257,6 +246,14 @@ Widget _body(VaultController c, VaultPage? p) {
     VaultPage.environmentDetail => _EnvDetail(c: c, id: l.environmentId ?? ''),
     VaultPage.variableEditor => _VarEditor(c: c, id: l.environmentId ?? ''),
     VaultPage.devices => _DeviceList(c: c),
+    VaultPage.deviceManagement => DeviceManagementPanel(
+      controller: c,
+      environments: [for (final e in c.environments)
+        if (e.role == AccessRole.admin) (id: e.id, name: e.name)],
+      sensitiveFormScope: c.sensitiveFormScope,
+    ),
+    VaultPage.pendingPairingDetail => _pendingPairingDetail(c),
+    VaultPage.accountReset => AccountResetPanel(controller: c),
     VaultPage.deviceDetail => _DeviceDetail(
       c: c,
       deviceId: l.deviceId,
@@ -266,11 +263,20 @@ Widget _body(VaultController c, VaultPage? p) {
       c: c,
       deviceId: l.deviceId,
       requestId: l.requestId,
+      pairingId: l.pairingId,
     ),
     VaultPage.settings => _Settings(c: c),
     VaultPage.accountSecurity => _AccountSecurity(c: c),
     VaultPage.recoveryManagement => _RecoveryManagement(c: c),
   };
+}
+
+Widget _pendingPairingDetail(VaultController c) {
+  final hint = c.pendingPairingHint(c.location.pairingId ?? '');
+  if (hint == null) return _missing(c, '原配对请求已过期或不在当前账号范围内。');
+  return PendingPairingDetail(request: hint, onContinue: () {
+    c.navigate(VaultPage.approval, pairingId: hint.pairingId);
+  });
 }
 
 class _Root extends StatefulWidget {
@@ -985,6 +991,8 @@ class _AccountFormState extends State<_AccountForm> {
         ),
         if (rows.isNotEmpty) HSection(children: rows),
         ...localPINAccountEntries(c),
+        if (!reg && c.serverVerified)
+          AccountResetEntry(onOpen: () => c.navigate(VaultPage.accountReset)),
         const HHint('密码不会被保存，提交后输入框立即清空。', icon: Icons.lock_outline),
         HSurface(
           child: HRow(
@@ -1947,34 +1955,10 @@ class _DeviceList extends StatelessWidget {
             ),
         ],
       ),
-      HSection(
-        title: '授权请求',
-        children: [
-          if (!c.authorizationRequestsAvailable)
-            Padding(
-              padding: const EdgeInsets.all(HSpace.lg),
-              child: HHint(
-                c.requestCapabilityMessage,
-                icon: Icons.construction_outlined,
-              ),
-            )
-          else if (c.pendingAuthorizationRequests.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(HSpace.lg),
-              child: HHint('没有待处理的请求。', icon: Icons.inbox_outlined),
-            )
-          else
-            for (final r in c.pendingAuthorizationRequests)
-              HRow(
-                icon: _platformIcon(r.platform),
-                tone: HTone.warning,
-                title: r.deviceName,
-                subtitle: '${r.platform} · ${_time(r.expiresAt)} 前有效',
-                onTap: () =>
-                    c.navigate(VaultPage.deviceDetail, requestId: r.id),
-              ),
-        ],
-      ),
+      PendingPairingsSection(controller: c, onReview: (hint) {
+        c.navigate(VaultPage.pendingPairingDetail, pairingId: hint.pairingId);
+      }),
+      ManagedAccessEntry(onOpen: () => c.navigate(VaultPage.deviceManagement)),
       HSection(
         children: [
           HRow(
@@ -2091,11 +2075,11 @@ enum _Lifetime {
 }
 
 class _Approval extends StatefulWidget {
-  const _Approval({required this.c, this.deviceId, this.requestId});
+  const _Approval({required this.c, this.deviceId, this.requestId, this.pairingId});
 
   final VaultController c;
   final String? deviceId;
-  final String? requestId;
+  final String? requestId, pairingId;
 
   @override
   State<_Approval> createState() => _ApprovalState();
@@ -2114,6 +2098,7 @@ class _ApprovalState extends State<_Approval> {
   @override
   void initState() {
     super.initState();
+    if (widget.pairingId != null) _pair.text = widget.pairingId!;
     _sensitiveInputs = SensitiveInputGuard(
       [_code],
       onCleared: () {
@@ -2162,13 +2147,18 @@ class _ApprovalState extends State<_Approval> {
   @override
   Widget build(BuildContext context) {
     final c = widget.c;
+    final hint = widget.pairingId == null ? null : c.pendingPairingHint(widget.pairingId!);
+    if (widget.pairingId != null &&
+        (hint == null || hint.state != PendingPairingState.pending)) {
+      return _missing(c, '原配对提示已到期或已批准，不能继续审批。');
+    }
     final rid = widget.requestId;
     final req = rid == null ? null : c.authorizationRequest(rid);
     if (rid != null && (req == null || !_live(req))) {
       return _missing(c, '该授权请求已过期、被撤销或你已无权处理。');
     }
     final dev = _device(c, widget.deviceId);
-    final target = req != null
+    final target = hint != null ? hint.initiatorDeviceId : req != null
         ? '${req.deviceName}（${req.platform}）'
         : dev != null
         ? '重新配对：${dev.name}'
@@ -2225,7 +2215,7 @@ class _ApprovalState extends State<_Approval> {
       narrow: true,
       children: [
         HNotice(
-          req == null && dev == null
+          req == null && dev == null && hint == null
               ? '手动配对：配对 ID 只是公开标识，不代表服务器上存在待批准的请求。'
               : '目标：$target',
           icon: Icons.devices_other_outlined,
@@ -2236,6 +2226,7 @@ class _ApprovalState extends State<_Approval> {
           children: [
             TextField(
               controller: _pair,
+              readOnly: widget.pairingId != null,
               autocorrect: false,
               enableSuggestions: false,
               style: hMono(Theme.of(context).textTheme.bodyLarge),
@@ -2430,6 +2421,8 @@ class _AccountSecurity extends StatelessWidget {
         ],
       ),
       ...localProtectionSecurityEntries(c),
+      if (!c.previewMode && c.serverVerified)
+        AccountResetEntry(onOpen: () => c.navigate(VaultPage.accountReset)),
       HSection(
         title: '恢复',
         children: [

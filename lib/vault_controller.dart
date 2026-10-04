@@ -1,6 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'account_reset/account_reset_coordinator.dart';
+import 'account_reset/account_reset_gateway.dart';
+import 'account_reset/account_reset_host.dart';
+import 'account_reset/account_reset_presentation.dart';
+import 'native/native_account_reset_adapter.dart';
+
 import 'recovery/recovery_presentation.dart';
 import 'management/management_presentation.dart';
 import 'management/management_gateway.dart';
@@ -413,9 +419,12 @@ enum VaultPage {
   variableEditor,
   devices,
   deviceDetail,
+  deviceManagement,
+  pendingPairingDetail,
   approval,
   settings,
   accountSecurity,
+  accountReset,
   recoveryManagement,
 }
 
@@ -426,9 +435,10 @@ class VaultLocation {
     this.environmentId,
     this.deviceId,
     this.requestId,
+    this.pairingId,
   });
   final VaultPage page;
-  final String? environmentId, deviceId, requestId;
+  final String? environmentId, deviceId, requestId, pairingId;
 }
 
 @immutable
@@ -497,12 +507,246 @@ abstract interface class SessionVaultGateway implements VaultGateway {
 }
 
 class VaultController extends ChangeNotifier
-    implements RecoveryActions, ManagementActions, PendingPairingActions {
+    implements
+        RecoveryActions,
+        ManagementActions,
+        PendingPairingActions,
+        AccountResetActions {
   VaultController({
     required this.gateway,
     this.allowPreview = false,
     DateTime Function()? now,
   }) : _now = now ?? DateTime.now;
+  AccountResetCoordinator? _accountResetFlow;
+  Future<void>? _accountResetDrain;
+  bool _accountResetStarted = false, _accountResetDrainFailed = false;
+  int _accountResetLifetime = 0;
+  bool get _accountResetEligible =>
+      serverVerified &&
+      !_disposed &&
+      _foreground &&
+      !privacyObscured &&
+      !previewMode &&
+      !_nativeCleanupPending &&
+      (_session.stage == SessionStage.signedOut ||
+          _session.stage == SessionStage.trusted && !_vaultSuspended) &&
+      !_accountResetDrainFailed &&
+      _accountResetDrain == null;
+  bool get _accountResetBlocksOrdinary =>
+      _accountResetStarted ||
+      _accountResetDrain != null ||
+      _accountResetDrainFailed;
+  AccountResetCoordinator _resetFlow() {
+    if (_accountResetFlow != null) return _accountResetFlow!;
+    AccountResetGateway provider = NativeAccountResetAdapter();
+    if (gateway is AccountResetGatewayProvider && _endpoint.isNotEmpty) {
+      provider = (gateway as AccountResetGatewayProvider)
+          .createAccountResetGateway();
+    }
+    return _accountResetFlow = AccountResetCoordinator(
+      provider,
+      AccountResetScope(
+        _endpoint,
+        accountId: _session.accountId,
+        accountGeneration: _session.accountGeneration,
+      ),
+      changed: _notify,
+      retireVisibleAccount: _retireResetVisibleAccount,
+    );
+  }
+
+  @override
+  AccountResetPresentation get accountReset {
+    if (!_accountResetEligible && _accountResetFlow == null) {
+      return AccountResetPresentation(
+        stage: AccountResetStage.unavailable,
+        status: '须先验证服务并确认原生重置能力，当前入口关闭。',
+        busy: false,
+      );
+    }
+    final p = (_accountResetFlow ?? _resetFlow()).accountReset;
+    return AccountResetPresentation(
+      stage: p.stage,
+      status: p.status,
+      busy: p.busy,
+      accountId: p.accountId,
+      accountGeneration: p.accountGeneration,
+      source: p.source,
+      queryOnly: p.queryOnly,
+      localCleanupConfirmed: p.localCleanupConfirmed,
+      error: p.error,
+      actions: _accountResetEligible
+          ? {
+              ...p.actions,
+              if (_accountResetStarted &&
+                  _resetFlow().gateway.supportedActions.contains(
+                    AccountResetAction.cancel,
+                  ))
+                AccountResetAction.cancel,
+            }
+          : const {},
+    );
+  }
+
+  @override
+  String get accountResetFormScope =>
+      '$_accountResetLifetime|${_accountResetFlow?.accountResetFormScope ?? 'none'}';
+  @override
+  bool get retainAccountResetInput =>
+      _accountResetEligible &&
+      (_accountResetFlow?.retainAccountResetInput ?? false);
+  Future<void> _resetAction(
+    AccountResetAction action,
+    Future<void> Function(AccountResetCoordinator) run,
+  ) async {
+    if (_busy || !_accountResetEligible || !accountReset.allows(action)) {
+      throw const AccountResetFailure(AccountResetFailureCode.unavailable);
+    }
+    final flow = _resetFlow(), token = ++_operationSerial;
+    _accountResetStarted = true;
+    _busy = true;
+    _activeOperation = token;
+    try {
+      await run(flow);
+    } finally {
+      if (_activeOperation == token) {
+        _busy = false;
+        _activeOperation = null;
+        if (_retainedForm && _privacyMask) {
+          _boundFormRetention(const Duration(seconds: 5));
+        }
+      }
+      _notify();
+    }
+  }
+
+  @override
+  Future<void> requestAccountResetEmail(String email) => _resetAction(
+    AccountResetAction.requestEmail,
+    (f) => f.requestAccountResetEmail(email),
+  );
+  @override
+  Future<void> beginFreshAccountReset(Uint8List proof) async {
+    try {
+      await _resetAction(
+        AccountResetAction.beginFresh,
+        (f) => f.beginFreshAccountReset(proof),
+      );
+    } finally {
+      proof.fillRange(0, proof.length, 0);
+    }
+  }
+
+  @override
+  Future<void> queryColdAccountReset(Uint8List proof) async {
+    try {
+      await _resetAction(
+        AccountResetAction.beginQueryOnly,
+        (f) => f.queryColdAccountReset(proof),
+      );
+    } finally {
+      proof.fillRange(0, proof.length, 0);
+    }
+  }
+
+  @override
+  Future<void> queryOriginalAccountReset() => _resetAction(
+    AccountResetAction.query,
+    (f) => f.queryOriginalAccountReset(),
+  );
+  @override
+  Future<void> prepareAccountReset(
+    Uint8List password, {
+    required String destructiveConfirmation,
+  }) async {
+    try {
+      await _resetAction(
+        AccountResetAction.prepare,
+        (f) => f.prepareAccountReset(
+          password,
+          destructiveConfirmation: destructiveConfirmation,
+        ),
+      );
+    } finally {
+      password.fillRange(0, password.length, 0);
+    }
+  }
+
+  @override
+  Future<void> completeAccountReset() => _resetAction(
+    AccountResetAction.complete,
+    (f) => f.completeAccountReset(),
+  );
+  // UI投影清理不能给native cleanup许可，也不能取消当前P3 owner/epoch。
+  void _retireResetVisibleAccount() {
+    _clearPendingPairings();
+    _resetManagement();
+    _recoveryFlow.invalidate(reset: true);
+    _retireSensitiveForm();
+    if (gateway is AccountResetGatewayProvider) {
+      (gateway as AccountResetGatewayProvider).retireAccountResetProjection();
+    }
+    _session = const VaultSession(SessionStage.signedOut);
+    _snapshot = VaultSnapshot(
+      checkpoint: 0,
+      environments: const [],
+      devices: const [],
+    );
+    _registration = null;
+    _initializationCode = null;
+    _initializationState = 'none';
+    _businessPending = const [];
+    _approvalProgress = const DeviceApprovalProgress(state: 'none');
+    _vaultSuspended = true;
+    _phase = ConnectionPhase.blocked;
+    _requests.clear();
+    _requestVersions.clear();
+    _prompted.clear();
+    _promptQueue.clear();
+    _activePrompt = null;
+    _locations
+      ..clear()
+      ..add(const VaultLocation(VaultPage.accountReset));
+    _notify();
+  }
+
+  Future<void> _retireAccountReset() {
+    if (_accountResetDrain != null) return _accountResetDrain!;
+    final flow = _accountResetFlow;
+    if (flow == null) return Future<void>.value();
+    _accountResetLifetime++;
+    // invalidateScope同步退休，然后才开始排空；不需要先拿普通busy门。
+    final retired = flow.invalidateScope();
+    late final Future<void> drain;
+    drain = retired.then(
+      (_) {
+        if (identical(_accountResetDrain, drain)) {
+          _accountResetFlow = null;
+          _accountResetStarted = false;
+          _accountResetDrain = null;
+          _notify();
+        }
+      },
+      onError: (Object e, StackTrace st) {
+        _accountResetDrainFailed = true;
+        _notify();
+        Error.throwWithStackTrace(e, st);
+      },
+    );
+    _accountResetDrain = drain;
+    // 后台/同步scope退休的未等待分支也必须消费错误，但显式caller仍收到失败。
+    unawaited(drain.catchError((Object _) {}));
+    return drain;
+  }
+
+  @override
+  Future<void> cancelAccountResetLocally() {
+    _activeOperation = null;
+    _busy = false;
+    _retireSensitiveForm();
+    return _retireAccountReset();
+  }
+
   PendingPairingSnapshot? _pairingHints;
   bool _pairingHintsBusy = false;
   int _pairingHintsEpoch = 0;
@@ -513,6 +757,7 @@ class VaultController extends ChangeNotifier
       !_disposed &&
       _foreground &&
       canEnterVault &&
+      !_accountResetBlocksOrdinary &&
       !privacyObscured &&
       !previewMode &&
       gateway is PendingPairingGateway &&
@@ -545,6 +790,13 @@ class VaultController extends ChangeNotifier
     if (gateway is PendingPairingGateway) {
       (gateway as PendingPairingGateway).retirePendingPairingResults();
     }
+  }
+
+  PendingPairingHint? pendingPairingHint(String id) {
+    final rows = pendingPairings.requests
+        .where((r) => r.pairingId == id)
+        .toList();
+    return rows.length == 1 ? rows.single : null;
   }
 
   void _schedulePendingPairingExpiry() {
@@ -641,6 +893,14 @@ class VaultController extends ChangeNotifier
   String? _managementError;
   bool _managementInspected = false, _managementRunning = false;
   bool get _hasManagementContinuation => _managementOperation.unresolved;
+  bool get managementContinuationVisible =>
+      _hasManagementContinuation &&
+      !_disposed &&
+      _foreground &&
+      !privacyObscured &&
+      !_nativeCleanupPending &&
+      !_accountResetBlocksOrdinary;
+
   void _clearManagementList() {
     _managedDevices = const [];
     _managedEnvironment = '';
@@ -1266,6 +1526,11 @@ class VaultController extends ChangeNotifier
 
   Future<void> _run(Future<void> Function(int epoch) operation) async {
     if (_busy || _disposed) return;
+    if (_accountResetBlocksOrdinary) {
+      _error = '原账号重置尚未结束或排空，先查询原流程或完成本机退出。';
+      _notify();
+      return;
+    }
     if (_nativeCleanupPending) {
       _error = '原生退出清理尚未确认，暂不能建立新会话或连接。';
       _notify();
@@ -1337,6 +1602,7 @@ class VaultController extends ChangeNotifier
   }
 
   void _resetLocalSession() {
+    unawaited(_retireAccountReset());
     _clearPendingPairings();
     _resetManagement();
     _recoveryFlow.invalidate(reset: true);
@@ -1366,6 +1632,7 @@ class VaultController extends ChangeNotifier
   }
 
   void _applySession(VaultSession session) {
+    unawaited(_retireAccountReset());
     _clearPendingPairings();
     _retireSensitiveForm();
     if (session.stage == SessionStage.preview ||
@@ -1428,6 +1695,8 @@ class VaultController extends ChangeNotifier
     final verified = await (gateway as InstanceConnectionGateway)
         .inspectInstance(candidate.toString());
     if (epoch != _epoch) return;
+    await _retireAccountReset();
+    if (epoch != _epoch || _disposed) return;
     if (gateway is ServerScopeGateway) {
       (gateway as ServerScopeGateway).bindVerifiedServer(candidate.toString());
     }
@@ -1448,6 +1717,8 @@ class VaultController extends ChangeNotifier
       );
   });
   bool switchServer() {
+    if (_accountResetBlocksOrdinary) return false;
+    unawaited(_retireAccountReset());
     if (_session.stage != SessionStage.signedOut ||
         _busy ||
         _nativeCleanupPending) {
@@ -1485,6 +1756,19 @@ class VaultController extends ChangeNotifier
 
   bool _allowed(VaultLocation next) {
     if (privacyObscured) return false;
+    if (next.page == VaultPage.accountReset) {
+      return serverVerified &&
+          !previewMode &&
+          (_session.stage == SessionStage.signedOut ||
+              _session.stage == SessionStage.trusted &&
+                  {
+                    VaultPage.accountSecurity,
+                    VaultPage.accountReset,
+                  }.contains(location.page));
+    }
+    if (_accountResetBlocksOrdinary && next.page != VaultPage.accountReset) {
+      return false;
+    }
     if (next.page == VaultPage.entry) {
       return _session.stage == SessionStage.signedOut;
     }
@@ -1508,7 +1792,8 @@ class VaultController extends ChangeNotifier
     }.contains(next.page)) {
       return _session.stage == SessionStage.deviceAuthorization;
     }
-    if (_hasManagementContinuation && next.page == VaultPage.devices) {
+    if (managementContinuationVisible &&
+        {VaultPage.devices, VaultPage.deviceManagement}.contains(next.page)) {
       return true;
     }
     if (!canEnterVault) return false;
@@ -1517,6 +1802,16 @@ class VaultController extends ChangeNotifier
       VaultPage.variableEditor,
     }.contains(next.page)) {
       return environments.any((e) => e.id == next.environmentId);
+    }
+    if (next.page == VaultPage.deviceManagement) {
+      return !previewMode && serverVerified;
+    }
+    if (next.page == VaultPage.pendingPairingDetail ||
+        next.page == VaultPage.approval && next.pairingId != null) {
+      final hint = pendingPairingHint(next.pairingId ?? '');
+      return hint != null &&
+          (next.page == VaultPage.pendingPairingDetail ||
+              hint.state == PendingPairingState.pending);
     }
     if (next.page == VaultPage.deviceDetail) {
       return next.requestId != null
@@ -1531,12 +1826,14 @@ class VaultController extends ChangeNotifier
     String? environmentId,
     String? deviceId,
     String? requestId,
+    String? pairingId,
   }) {
     final next = VaultLocation(
       page,
       environmentId: environmentId,
       deviceId: deviceId,
       requestId: requestId,
+      pairingId: pairingId,
     );
     if (_disposed || !_allowed(next)) return false;
     if (requestId != null && requestId == _activePrompt) _activePrompt = null;
@@ -1972,6 +2269,8 @@ class VaultController extends ChangeNotifier
         candidate.hasFragment) {
       throw const GatewayFailure('请输入 HTTPS 服务地址，不得包含凭据、查询参数或片段。');
     }
+    await _retireAccountReset();
+    if (epoch != _epoch || _disposed) return;
     _retireSensitiveForm();
     _endpoint = candidate.toString();
     _instance = null;
@@ -1983,6 +2282,14 @@ class VaultController extends ChangeNotifier
   Future<void> approveDevice(ApprovalDraft draft) => _run((epoch) async {
     if (!canEnterVault || !supports('approveDevice')) {
       throw const GatewayFailure('配对审批界面尚未接通已验原生能力，未批准设备。');
+    }
+    if (location.pairingId != null) {
+      final hint = pendingPairingHint(location.pairingId!);
+      if (hint == null ||
+          hint.state != PendingPairingState.pending ||
+          draft.pairingId != hint.pairingId) {
+        throw const GatewayFailure('原配对提示已过期或改变；未发送审批。');
+      }
     }
     if (!RegExp(r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$')
             .hasMatch(draft.pairingId) ||
@@ -2088,6 +2395,7 @@ class VaultController extends ChangeNotifier
   Future<void> _performLogout(int token, int epoch) async {
     await Future<void>.value();
     try {
+      await _retireAccountReset();
       if (gateway is SessionVaultGateway) {
         await (gateway as SessionVaultGateway).logout();
       }
@@ -2180,6 +2488,7 @@ class VaultController extends ChangeNotifier
   void setForeground(bool value) {
     _foreground = value;
     if (!value) {
+      unawaited(_retireAccountReset());
       _clearPendingPairings();
       _retireSensitiveForm();
       _clearManagementList();
@@ -2204,6 +2513,7 @@ class VaultController extends ChangeNotifier
       return;
     }
     if (!_foreground ||
+        _accountResetBlocksOrdinary ||
         !canEnterVault ||
         !authorizationRequestsAvailable ||
         _disposed ||
@@ -2302,6 +2612,7 @@ class VaultController extends ChangeNotifier
   @override
   void dispose() {
     _disposed = true;
+    unawaited(_retireAccountReset());
     _recoveryFlow.dispose();
     _resetLocalSession();
     super.dispose();

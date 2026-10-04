@@ -1,5 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
+
+import '../account_reset/account_reset_gateway.dart';
+import '../account_reset/account_reset_host.dart';
+import '../account_reset/account_reset_presentation.dart';
+import 'native_account_reset_adapter.dart';
+import 'native_account_reset_channel.dart';
+
 import 'dart:io';
 import 'dart:math';
 
@@ -225,7 +232,8 @@ class NativeVaultGateway
         LocalProtectionGateway,
         RecoveryGateway,
         DeviceManagementGateway,
-        PendingPairingGateway {
+        PendingPairingGateway,
+        AccountResetGatewayProvider {
   NativeVaultGateway({
     required this.experimentalOptIn,
     this.productFixture = false,
@@ -235,6 +243,7 @@ class NativeVaultGateway
     Set<String> verifiedDAGOperations = const {},
     Set<String> verifiedManagementOperations = const {},
     Set<String> verifiedPendingPairingOperations = const {},
+    Set<AccountResetAction> verifiedAccountResetActions = const {},
     DateTime Function()? now,
     Future<InstanceDescriptor> Function(String)? inspector,
   }) : _port = port ?? const MethodChannelGatewayPort(),
@@ -251,8 +260,42 @@ class NativeVaultGateway
        _verifiedPendingPairingOperations = Set.unmodifiable(
          verifiedPendingPairingOperations,
        ),
+       _verifiedAccountResetActions = Set.unmodifiable(
+         verifiedAccountResetActions,
+       ),
        _now = now ?? DateTime.now,
        _inspector = inspector ?? inspectHarmoniaInstance;
+  final Set<AccountResetAction> _verifiedAccountResetActions;
+  Set<AccountResetAction> _compiledAccountResetActions = const {};
+  @override
+  AccountResetGateway createAccountResetGateway() {
+    final epoch = _scopeEpoch, endpoint = _endpoint;
+    final declared =
+        experimentalOptIn && !_cleanupPending && _inspected.contains(endpoint)
+        ? _compiledAccountResetActions
+        : <AccountResetAction>{};
+    return ScopedAccountResetGateway(
+      NativeAccountResetAdapter(
+        port: const MethodChannelAccountResetPort(),
+        compiledActions: declared,
+        verifiedActions: _verifiedAccountResetActions,
+      ),
+      endpoint,
+      () => epoch == _scopeEpoch && endpoint == _endpoint && !_cleanupPending,
+    );
+  }
+
+  @override
+  void retireAccountResetProjection() {
+    // 只撤RAM显示来源；不改scopeEpoch，不给native cleanup回调或物理删除声明。
+    retireManagementResults();
+    retireRecoveryResults();
+    retirePendingPairingResults();
+    _trusted = null;
+    _checkpoint = 0;
+    _approvalVersion = 0;
+  }
+
   final bool experimentalOptIn, productFixture;
   ProductFixtureConnection? _fixtureConnection;
   final NativeGatewayPort _port;
@@ -1275,6 +1318,7 @@ class NativeVaultGateway
     _dagRuntimeOperations = const {};
     _nativeDAGOwnerCancellation = false;
     _compiledPendingPairingOperations = const {};
+    _compiledAccountResetActions = const {};
     final caps = await _port.capabilities();
     final profile = await _port.profile();
     if (epoch != _scopeEpoch) return;
@@ -1291,6 +1335,15 @@ class NativeVaultGateway
         operations.any((v) => v is! String)) {
       throw const GatewayFailure('原生能力配置不符合当前协议，已拒绝。');
     }
+    for (final key in [
+      'nativeAccountReset',
+      'nativeAccountResetEmailRequest',
+    ]) {
+      if (caps.containsKey(key) && caps[key] is! bool) {
+        throw const GatewayFailure('账号重置编译能力配置无效，当前不可用。');
+      }
+    }
+    _compiledAccountResetActions = compiledAccountResetActions(caps);
     _systemStrong = caps['systemStrongAuthentication'] == true;
     if (caps['appPINDeviceExists'] == true) _pinPreviouslyObserved = true;
     _protectedDeviceExists = caps['protectedDeviceExists'] == true;
