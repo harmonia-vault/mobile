@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'recovery/recovery_presentation.dart';
 import 'management/management_presentation.dart';
 import 'management/management_gateway.dart';
+import 'pairing/pending_pairing_gateway.dart';
+import 'pairing/pending_pairing_presentation.dart';
 import 'recovery/recovery_gateway.dart';
 import 'recovery/recovery_coordinator.dart';
 
@@ -495,12 +497,141 @@ abstract interface class SessionVaultGateway implements VaultGateway {
 }
 
 class VaultController extends ChangeNotifier
-    implements RecoveryActions, ManagementActions {
+    implements RecoveryActions, ManagementActions, PendingPairingActions {
   VaultController({
     required this.gateway,
     this.allowPreview = false,
     DateTime Function()? now,
   }) : _now = now ?? DateTime.now;
+  PendingPairingSnapshot? _pairingHints;
+  bool _pairingHintsBusy = false;
+  int _pairingHintsEpoch = 0;
+  Timer? _pairingHintsTimer;
+  String? _pairingHintsError;
+  String _pairingHintsStatus = '请在前台刷新设备配对请求。';
+  bool get _pendingPairingsReadable =>
+      !_disposed &&
+      _foreground &&
+      canEnterVault &&
+      !privacyObscured &&
+      !previewMode &&
+      gateway is PendingPairingGateway &&
+      (gateway as PendingPairingGateway).pendingPairingsAvailable;
+  @override
+  PendingPairingPresentation get pendingPairings {
+    final visible = _pendingPairingsReadable;
+    final snapshot = visible ? _pairingHints : null;
+    return PendingPairingPresentation(
+      available: visible,
+      busy: _pairingHintsBusy,
+      status: visible ? _pairingHintsStatus : '当前设备尚无已验证的请求读取能力。',
+      error: _pairingHintsError,
+      accountId: snapshot?.accountId,
+      accountGeneration: snapshot?.accountGeneration,
+      approverDeviceId: snapshot?.approverDeviceId,
+      certificateVersion: snapshot?.certificateVersion,
+      requests:
+          snapshot?.requests.where((r) => r.expiresAt.isAfter(_now())) ??
+          const [],
+    );
+  }
+
+  void _clearPendingPairings() {
+    _pairingHintsEpoch++;
+    _pairingHints = null;
+    _pairingHintsBusy = false;
+    _pairingHintsTimer?.cancel();
+    _pairingHintsTimer = null;
+    if (gateway is PendingPairingGateway) {
+      (gateway as PendingPairingGateway).retirePendingPairingResults();
+    }
+  }
+
+  void _schedulePendingPairingExpiry() {
+    _pairingHintsTimer?.cancel();
+    _pairingHintsTimer = null;
+    final snapshot = _pairingHints;
+    if (snapshot == null) return;
+    final remaining = snapshot.requests
+        .where((r) => r.expiresAt.isAfter(_now()))
+        .toList();
+    _pairingHints = PendingPairingSnapshot(
+      accountId: snapshot.accountId,
+      accountGeneration: snapshot.accountGeneration,
+      approverDeviceId: snapshot.approverDeviceId,
+      certificateVersion: snapshot.certificateVersion,
+      capabilities: snapshot.capabilities,
+      requests: remaining,
+    );
+    if (remaining.isEmpty) return;
+    final next = remaining
+        .map((r) => r.expiresAt)
+        .reduce((a, b) => a.isBefore(b) ? a : b);
+    final epoch = _pairingHintsEpoch;
+    _pairingHintsTimer = Timer(next.difference(_now()), () {
+      if (_disposed || epoch != _pairingHintsEpoch) return;
+      _schedulePendingPairingExpiry();
+      _notify();
+    });
+  }
+
+  @override
+  Future<void> refreshPendingPairings() async {
+    if (_disposed || _pairingHintsBusy || _busy) return;
+    if (!_pendingPairingsReadable) {
+      _clearPendingPairings();
+      _notify();
+      return;
+    }
+    await _run((epoch) async {
+      _clearPendingPairings();
+      final readEpoch = _pairingHintsEpoch;
+      final account = _session.accountId,
+          generation = _session.accountGeneration;
+      _pairingHintsBusy = true;
+      _pairingHintsError = null;
+      _notify();
+      try {
+        final snapshot = await (gateway as PendingPairingGateway)
+            .pendingPairingRequests();
+        if (epoch != _epoch || readEpoch != _pairingHintsEpoch) return;
+        await _awaitVaultForeground(epoch);
+        if (epoch != _epoch ||
+            readEpoch != _pairingHintsEpoch ||
+            !_pendingPairingsReadable) {
+          return;
+        }
+        if (snapshot.authoritativeForApproval ||
+            snapshot.accountId != account ||
+            snapshot.accountGeneration != generation ||
+            _session.accountId != account ||
+            _session.accountGeneration != generation) {
+          throw const GatewayFailure(
+            '请求提示与当前账号范围不一致，已停止显示。',
+            suspendVault: true,
+          );
+        }
+        // 完整快照替换；同原ID不追加重复行，approved提示不等于本机批准权限。
+        _pairingHints = snapshot;
+        _schedulePendingPairingExpiry();
+        _pairingHintsStatus = '列表仅提示配对请求；批准仍需完整短码和明确的环境、角色、期限。';
+      } on GatewayFailure catch (failure) {
+        if (epoch != _epoch || readEpoch != _pairingHintsEpoch) return;
+        _clearPendingPairings();
+        _pairingHintsError = failure.message;
+        rethrow;
+      } catch (_) {
+        if (epoch != _epoch || readEpoch != _pairingHintsEpoch) return;
+        _clearPendingPairings();
+        _pairingHintsError = '请求列表未能确认；已清除旧提示，请重新刷新。';
+        throw GatewayFailure(_pairingHintsError!);
+      } finally {
+        if (readEpoch == _pairingHintsEpoch) _pairingHintsBusy = false;
+        _notify();
+      }
+    });
+  }
+
   ManagementOperation _managementOperation = const ManagementOperation(
     phase: ManagementPhase.idle,
   );
@@ -1157,6 +1288,7 @@ class VaultController extends ChangeNotifier
       if (epoch == _epoch) {
         if (failure.invalidateSession) _resetLocalSession();
         if (failure.suspendVault) {
+          _clearPendingPairings();
           _retireSensitiveForm();
           _vaultSuspended = true;
           _snapshot = VaultSnapshot(
@@ -1193,6 +1325,7 @@ class VaultController extends ChangeNotifier
   }
 
   void _suspendVault() {
+    _clearPendingPairings();
     _retireSensitiveForm();
     _vaultSuspended = true;
     _snapshot = VaultSnapshot(
@@ -1204,6 +1337,7 @@ class VaultController extends ChangeNotifier
   }
 
   void _resetLocalSession() {
+    _clearPendingPairings();
     _resetManagement();
     _recoveryFlow.invalidate(reset: true);
     _retireSensitiveForm();
@@ -1232,6 +1366,7 @@ class VaultController extends ChangeNotifier
   }
 
   void _applySession(VaultSession session) {
+    _clearPendingPairings();
     _retireSensitiveForm();
     if (session.stage == SessionStage.preview ||
         session.stage == SessionStage.trusted &&
@@ -1240,6 +1375,7 @@ class VaultController extends ChangeNotifier
     }
     if (session.accountId != _session.accountId ||
         session.accountGeneration != _session.accountGeneration) {
+      _clearPendingPairings();
       _clearManagementList();
       _requests.clear();
       _requestVersions.clear();
@@ -1511,6 +1647,7 @@ class VaultController extends ChangeNotifier
     if (_accessReduced(_snapshot, pulled)) {
       // 同账号的撤销/降权/环境消失同样终止旧表单，不能只检查trusted。
       _retireSensitiveForm();
+      _clearPendingPairings();
       _clearManagementList();
     }
     _snapshot = pulled;
@@ -1853,6 +1990,7 @@ class VaultController extends ChangeNotifier
         draft.roles.isEmpty) {
       throw const GatewayFailure('需独立 PairID、8位数字秘密短码及明确环境权限。');
     }
+    _clearPendingPairings();
     await (gateway as SessionVaultGateway).approve(draft);
     if (epoch != _epoch) return;
     if (gateway is ApprovalContinuationGateway) {
@@ -2042,6 +2180,7 @@ class VaultController extends ChangeNotifier
   void setForeground(bool value) {
     _foreground = value;
     if (!value) {
+      _clearPendingPairings();
       _retireSensitiveForm();
       _clearManagementList();
       if (_managementRunning) _suspendVault();
@@ -2060,6 +2199,10 @@ class VaultController extends ChangeNotifier
   }
 
   Future<void> refreshAuthorizationRequests() async {
+    if (gateway is PendingPairingGateway) {
+      await refreshPendingPairings();
+      return;
+    }
     if (!_foreground ||
         !canEnterVault ||
         !authorizationRequestsAvailable ||

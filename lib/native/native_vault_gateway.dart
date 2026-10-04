@@ -8,6 +8,8 @@ import 'package:flutter/foundation.dart' show kDebugMode;
 
 import '../vault_controller.dart';
 import '../management/management_gateway.dart';
+import '../pairing/pending_pairing_gateway.dart';
+import 'native_pending_pairings_adapter.dart';
 import '../management/management_presentation.dart';
 import 'native_management_contract.dart';
 import '../recovery/recovery_gateway.dart';
@@ -52,8 +54,17 @@ class MethodChannelGatewayPort
         NativeFixtureConnectionPort,
         NativeLocalProtectionPort,
         NativeDAGRecoveryPort,
-        NativeDAGProfilePort {
+        NativeDAGProfilePort,
+        NativePendingPairingsPort {
   const MethodChannelGatewayPort();
+  @override
+  Future<Map<String, Object?>> executePendingPairings(
+    String endpoint,
+    String operation,
+  ) => const NativePendingPairingsAdapter().executePendingPairings(
+    endpoint,
+    operation,
+  );
   @override
   Future<Map<String, Object?>> dagWorkflowProfile() =>
       const NativeDAGRecoveryAdapter().dagWorkflowProfile();
@@ -213,7 +224,8 @@ class NativeVaultGateway
         BusinessPendingGateway,
         LocalProtectionGateway,
         RecoveryGateway,
-        DeviceManagementGateway {
+        DeviceManagementGateway,
+        PendingPairingGateway {
   NativeVaultGateway({
     required this.experimentalOptIn,
     this.productFixture = false,
@@ -222,6 +234,7 @@ class NativeVaultGateway
     Set<String>? verifiedPINOperations,
     Set<String> verifiedDAGOperations = const {},
     Set<String> verifiedManagementOperations = const {},
+    Set<String> verifiedPendingPairingOperations = const {},
     DateTime Function()? now,
     Future<InstanceDescriptor> Function(String)? inspector,
   }) : _port = port ?? const MethodChannelGatewayPort(),
@@ -234,6 +247,9 @@ class NativeVaultGateway
        _verifiedDAGOperations = Set.unmodifiable(verifiedDAGOperations),
        _verifiedManagementOperations = Set.unmodifiable(
          verifiedManagementOperations,
+       ),
+       _verifiedPendingPairingOperations = Set.unmodifiable(
+         verifiedPendingPairingOperations,
        ),
        _now = now ?? DateTime.now,
        _inspector = inspector ?? inspectHarmoniaInstance;
@@ -563,6 +579,110 @@ class NativeVaultGateway
         _managementOperation = _managementUnknown(original);
       }
       rethrow;
+    }
+  }
+
+  final Set<String> _verifiedPendingPairingOperations;
+  Set<String> _compiledPendingPairingOperations = const {};
+  int _pendingPairingEpoch = 0;
+  bool _pendingPairingReading = false;
+  String get _pendingPairingOperation => switch (_approvalVersion) {
+    3 => 'pendingPairingRequestsV3',
+    4 => 'pendingPairingRequestsV4',
+    _ => '',
+  };
+  @override
+  bool get pendingPairingsAvailable =>
+      experimentalOptIn &&
+      !_dagSelected &&
+      _systemStrong &&
+      _port is NativePendingPairingsPort &&
+      _trusted != null &&
+      _trusted!.view.environments.any((e) => e.role == AccessRole.admin) &&
+      !_pendingUnknown &&
+      !_managementOperation.unresolved &&
+      _approvalPendingId == null &&
+      _localProtection?.mode != LocalProtectionMode.pin &&
+      _localProtection?.mode != LocalProtectionMode.blocked &&
+      _localProtection?.upgradeRequired != true &&
+      !_cleanupPending &&
+      _endpoint.isNotEmpty &&
+      _compiledPendingPairingOperations.contains(_pendingPairingOperation) &&
+      _verifiedPendingPairingOperations.contains(_pendingPairingOperation);
+  @override
+  void retirePendingPairingResults() {
+    _pendingPairingEpoch++;
+  }
+
+  @override
+  Future<PendingPairingSnapshot> pendingPairingRequests() async {
+    if (!pendingPairingsAvailable || _pendingPairingReading) {
+      throw const GatewayFailure('当前设备没有已验证的前台请求读取能力。');
+    }
+    final epoch = _pendingPairingEpoch, scope = _scopeEpoch;
+    final operation = _pendingPairingOperation, before = _trusted!;
+    bool current() =>
+        epoch == _pendingPairingEpoch &&
+        scope == _scopeEpoch &&
+        !_cleanupPending &&
+        _pendingPairingOperation == operation &&
+        !_dagSelected;
+    _pendingPairingReading = true;
+    try {
+      await refreshLocalProtection();
+      if (!current() || !pendingPairingsAvailable) {
+        throw const GatewayFailure('原请求读取范围已关闭。');
+      }
+      // Go 此入口每次先新Boot、完整Pull和当前Admin检查；列表不是审批依据。
+      final raw = await _platform(
+        () => (_port as NativePendingPairingsPort).executePendingPairings(
+          _endpoint,
+          operation,
+        ),
+      );
+      if (!current() || !pendingPairingsAvailable) {
+        throw const GatewayFailure('已丢弃原请求范围的晚到结果。');
+      }
+      final snapshot = decodePendingPairings(operation, raw);
+      final after = _trusted;
+      if (after == null ||
+          snapshot.accountId != before.session.accountId ||
+          snapshot.accountGeneration != before.session.accountGeneration ||
+          snapshot.approverDeviceId != before.deviceId ||
+          after.session.accountId != before.session.accountId ||
+          after.session.accountGeneration != before.session.accountGeneration ||
+          after.deviceId != before.deviceId) {
+        _trusted = null;
+        _approvalVersion = 0;
+        retirePendingPairingResults();
+        throw const GatewayFailure(
+          '请求提示的账号或设备范围改变，已关闭读取。',
+          suspendVault: true,
+          invalidateSession: true,
+        );
+      }
+      // 明确不从snapshot证书或capabilities设置_approvalVersion/审批权限。
+      return snapshot;
+    } on NativeIntentFailure catch (failure) {
+      if (current() &&
+          (failure.trustInvalidated ||
+              failure.code == 'LOCAL_PROTECTION_PERSISTENCE')) {
+        _trusted = null;
+        _approvalVersion = 0;
+        retirePendingPairingResults();
+        if (failure.code == 'LOCAL_PROTECTION_PERSISTENCE') {
+          // 原生槽删除/排空未确认，只有已确认的logout清理才能解除本机闭锁。
+          _cleanupPending = true;
+          throw GatewayFailure(
+            failure.message,
+            suspendVault: true,
+            invalidateSession: true,
+          );
+        }
+      }
+      rethrow;
+    } finally {
+      _pendingPairingReading = false;
     }
   }
 
@@ -1154,6 +1274,7 @@ class NativeVaultGateway
     final epoch = _scopeEpoch;
     _dagRuntimeOperations = const {};
     _nativeDAGOwnerCancellation = false;
+    _compiledPendingPairingOperations = const {};
     final caps = await _port.capabilities();
     final profile = await _port.profile();
     if (epoch != _scopeEpoch) return;
@@ -1174,6 +1295,18 @@ class NativeVaultGateway
     if (caps['appPINDeviceExists'] == true) _pinPreviouslyObserved = true;
     _protectedDeviceExists = caps['protectedDeviceExists'] == true;
     _runtimeOperations = Set.unmodifiable(operations.cast<String>());
+    final compiledPending = <String>{};
+    for (final version in ['3', '4']) {
+      final key = 'nativePendingPairingRequestsV$version';
+      if (caps.containsKey(key) && caps[key] is! bool) {
+        throw const GatewayFailure('前台请求编译能力配置无效。');
+      }
+      if (caps[key] == true) {
+        compiledPending.add('pendingPairingRequestsV$version');
+      }
+    }
+    _compiledPendingPairingOperations = Set.unmodifiable(compiledPending);
+
     if (_verifiedDAGOperations.isNotEmpty && _port is NativeDAGProfilePort) {
       final dag = await _platform(
         () => (_port as NativeDAGProfilePort).dagWorkflowProfile(),
@@ -1746,6 +1879,7 @@ class NativeVaultGateway
   Future<void> logout() async {
     retireManagementResults();
     retireRecoveryResults();
+    retirePendingPairingResults();
     _scopeEpoch++;
     _cleanupPending = true;
     _trusted = null;
