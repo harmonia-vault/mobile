@@ -17,7 +17,7 @@ internal class ProductFixtureConfiguration private constructor(
     )
 
     companion object {
-        private const val PACKAGE = "org.harmoniavault.harmonia_mobile.productfixture"
+        private const val PACKAGE = "org.harmoniavault.harmonia_trial.productfixture"
         private val pem = Regex("\\A-----BEGIN CERTIFICATE-----\\r?\\n([A-Za-z0-9+/=\\r\\n]+)-----END CERTIFICATE-----\\r?\\n?\\z")
 
         /** 参数只能来自BuildConfig和运行包名，不从MethodChannel接受。 */

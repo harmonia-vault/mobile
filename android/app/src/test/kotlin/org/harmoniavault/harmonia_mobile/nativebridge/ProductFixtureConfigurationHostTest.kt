@@ -8,7 +8,7 @@ object ProductFixtureConfigurationHostTest {
     @JvmStatic fun main(args: Array<String>) {
         val ca = File(args.single()).readText(Charsets.US_ASCII)
         val encoded = Base64.getEncoder().encodeToString(ca.toByteArray(Charsets.US_ASCII))
-        val pkg = "org.harmoniavault.harmonia_mobile.productfixture"
+        val pkg = "org.harmoniavault.harmonia_trial.productfixture"
         val endpoint = "https://10.0.2.2:4443"
         val config = ProductFixtureConfiguration.fromBuild(true, true, pkg, endpoint, encoded)!!
         check(config.attestation().keys == setOf("version", "productFixture", "endpoint", "caPem"))
@@ -25,6 +25,7 @@ object ProductFixtureConfigurationHostTest {
         rejected(debug = false)
         rejected(enabled = false)
         rejected(packageName = "org.harmoniavault.harmonia_mobile")
+        rejected(packageName = "org.harmoniavault.harmonia_mobile.productfixture")
         rejected(url = "https://fixture.example.invalid:4443")
         rejected(url = "http://10.0.2.2:4443")
         rejected(url = "https://10.0.2.2:4443/")
@@ -37,6 +38,6 @@ object ProductFixtureConfigurationHostTest {
         rejected(publicCA = Base64.getEncoder().encodeToString((ca + ca).toByteArray()))
         // 只有合成header，无私钥body；固定片段组成相同运行时负例，避免源码秘密scanner误报。
         rejected(publicCA = Base64.getEncoder().encodeToString(("-----BEGIN " + "PRIVATE " + "KEY-----").toByteArray()))
-        println("PASS productfixture host15 boundary cases; Android/real TLS/product UNRUN")
+        println("PASS productfixture host16 boundary cases; Android/real TLS/product UNRUN")
     }
 }
