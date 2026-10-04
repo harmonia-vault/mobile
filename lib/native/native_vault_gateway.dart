@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 
 import '../vault_controller.dart';
+import '../recovery/recovery_gateway.dart';
+import 'native_dag_recovery_adapter.dart';
 import 'native_business_adapter.dart';
 import 'native_fixture_connection.dart';
 import 'native_pin_adapter.dart';
@@ -45,8 +47,21 @@ class MethodChannelGatewayPort
     implements
         NativeGatewayPort,
         NativeFixtureConnectionPort,
-        NativeLocalProtectionPort {
+        NativeLocalProtectionPort,
+        NativeDAGRecoveryPort {
   const MethodChannelGatewayPort();
+  @override
+  Future<Map<String, Object?>> executeDAGRecovery(
+    String endpoint,
+    String operation,
+    Map<String, String> fields,
+    Uint8List completeCode,
+  ) => const NativeDAGRecoveryAdapter().executeDAGRecovery(
+    endpoint,
+    operation,
+    fields,
+    completeCode,
+  );
   @override
   Future<LocalProtectionStatus> localProtectionInfo(String endpoint) =>
       NativePINAdapter(endpoint).information();
@@ -173,13 +188,15 @@ class NativeVaultGateway
         EmailProofGateway,
         ApprovalContinuationGateway,
         BusinessPendingGateway,
-        LocalProtectionGateway {
+        LocalProtectionGateway,
+        RecoveryGateway {
   NativeVaultGateway({
     required this.experimentalOptIn,
     this.productFixture = false,
     NativeGatewayPort? port,
     Set<String>? verifiedNativeOperations,
     Set<String>? verifiedPINOperations,
+    Set<String> verifiedDAGOperations = const {},
     DateTime Function()? now,
     Future<InstanceDescriptor> Function(String)? inspector,
   }) : _port = port ?? const MethodChannelGatewayPort(),
@@ -189,6 +206,7 @@ class NativeVaultGateway
        _verifiedPINOperations = Set.unmodifiable(
          verifiedPINOperations ?? _pinEvidence,
        ),
+       _verifiedDAGOperations = Set.unmodifiable(verifiedDAGOperations),
        _now = now ?? DateTime.now,
        _inspector = inspector ?? inspectHarmoniaInstance;
   final bool experimentalOptIn, productFixture;
@@ -196,6 +214,149 @@ class NativeVaultGateway
   final NativeGatewayPort _port;
   final Set<String> _verifiedOperations;
   final Set<String> _verifiedPINOperations;
+  final Set<String> _verifiedDAGOperations;
+  int _recoveryEpoch = 0;
+  bool _dagSelected = false;
+  RecoveryTrusted? _dagTrusted;
+
+  @override
+  bool get recoveryStateMayExist => _protectedDeviceExists;
+
+  @override
+  Set<String> get recoveryCapabilities => Set.unmodifiable({
+    if (experimentalOptIn &&
+        _systemStrong &&
+        _port is NativeDAGRecoveryPort &&
+        _localProtection?.mode != LocalProtectionMode.pin &&
+        _localProtection?.mode != LocalProtectionMode.blocked &&
+        _localProtection?.upgradeRequired != true &&
+        !_cleanupPending &&
+        _endpoint.isNotEmpty)
+      for (final op in dagRecoveryFields.keys)
+        if (_runtimeOperations.contains(op) &&
+            _verifiedDAGOperations.contains(op))
+          op,
+  });
+  void _requireDAG(String operation) {
+    if (!recoveryCapabilities.contains(operation)) {
+      throw const GatewayFailure('此 DAG 恢复操作没有逐项原生验收证据或当前能力。');
+    }
+  }
+
+  @override
+  void retireRecoveryResults() {
+    _recoveryEpoch++;
+    _dagTrusted = null;
+  }
+
+  @override
+  Future<RecoveryReply> executeRecovery(
+    String operation,
+    Map<String, String> fields,
+    Uint8List completeCode,
+  ) async {
+    final epoch = _recoveryEpoch, scope = _scopeEpoch;
+    final previous = _dagTrusted;
+    try {
+      _requireDAG(operation);
+      await refreshLocalProtection();
+      _requireDAG(operation);
+      if (operation == 'openDAGRecoveryOwner') await _ensureDevice();
+      _requireDAG(operation);
+      if (epoch != _recoveryEpoch || scope != _scopeEpoch) {
+        throw const GatewayFailure('恢复本机范围已关闭。');
+      }
+      _dagSelected = true;
+      _trusted = null;
+      final raw = await _platform(
+        () => (_port as NativeDAGRecoveryPort).executeDAGRecovery(
+          _endpoint,
+          operation,
+          fields,
+          completeCode,
+        ),
+      );
+      if (epoch != _recoveryEpoch || scope != _scopeEpoch || _cleanupPending) {
+        throw const GatewayFailure('已丢弃原恢复范围的晚到结果。');
+      }
+      final reply = decodeDAGRecovery(operation, raw);
+      final result = reply.payload;
+      if (result is RecoveryTrusted) {
+        if (operation == 'applyDAGRecoveredDevice' &&
+                (result.operationId != fields['operationId'] ||
+                    result.contentHash != fields['contentHash']) ||
+            previous != null &&
+                (result.accountId != previous.accountId ||
+                    result.accountGeneration != previous.accountGeneration ||
+                    result.deviceId != previous.deviceId ||
+                    result.operationId != previous.operationId ||
+                    result.contentHash != previous.contentHash ||
+                    result.acceptedSequence != previous.acceptedSequence ||
+                    result.snapshot.checkpoint <
+                        previous.snapshot.checkpoint)) {
+          throw const GatewayFailure(
+            '已恢复来源的绑定、原包或检查点改变，已关闭读取。',
+            suspendVault: true,
+          );
+        }
+        _dagTrusted = result;
+        _deviceId = result.deviceId;
+        _checkpoint = result.snapshot.checkpoint;
+      }
+      return reply;
+    } catch (_) {
+      if (epoch == _recoveryEpoch && scope == _scopeEpoch) _dagTrusted = null;
+      rethrow;
+    } finally {
+      completeCode.fillRange(0, completeCode.length, 0);
+    }
+  }
+
+  @override
+  Future<void> cancelRecoveryOwner() async {
+    retireRecoveryResults();
+    _requireDAG('cancelDAGRecoveryOwner');
+    final raw = await _platform(
+      () => (_port as NativeDAGRecoveryPort).executeDAGRecovery(
+        _endpoint,
+        'cancelDAGRecoveryOwner',
+        const {},
+        Uint8List(0),
+      ),
+    );
+    nativeFields(raw, {
+      'version',
+      'operation',
+      'localOwnerClosed',
+      'journalPreserved',
+      'trustedDevice',
+    });
+    if (raw['version'] != 1 ||
+        raw['operation'] != 'cancelDAGRecoveryOwner' ||
+        raw['localOwnerClosed'] != true ||
+        raw['journalPreserved'] != true ||
+        raw['trustedDevice'] != false) {
+      throw const GatewayFailure('本机原生取消结果无效；未确认服务器关闭或原包清除。');
+    }
+  }
+
+  VaultSnapshot _dagSnapshot(RecoveryTrusted source) => VaultSnapshot(
+    checkpoint: source.snapshot.checkpoint,
+    environments: source.snapshot.environments,
+    devices: [
+      VaultDevice(
+        id: source.deviceId,
+        name: '本机',
+        platform: 'Android',
+        current: true,
+        accessSummary: source.snapshot.environments
+            .map((e) => '${e.name}：${e.role.label}')
+            .join('；'),
+        expiresLabel: '按原生已验授权生效',
+      ),
+    ],
+  );
+
   LocalProtectionStatus? _localProtection;
   bool _pinPreviouslyObserved = false;
   LocalPINPrompt? _pinPrompt;
@@ -490,36 +651,40 @@ class NativeVaultGateway
   }
 
   @override
-  Set<String> get capabilities => Set.unmodifiable({
-    if (_has('register')) 'registerAccount',
-    if (_has('verifyEmail')) 'verifyEmail',
-    if (_has('loginAccount')) 'loginAccount',
-    if (_has('restoreSession') && _has('businessPendingInfo')) 'restoreSession',
-    if (_has('beginInitialization') &&
-        _has('completeInitialization') &&
-        _has('restoreSession') &&
-        _has('businessPendingInfo'))
-      'beginInitialization',
-    if (_has('completeInitialization') &&
-        _has('restoreSession') &&
-        _has('businessPendingInfo'))
-      'completeInitialization',
-    if (_has('queryInitialization')) 'queryInitialization',
-    for (final op in const [
-      'createEnvironment',
-      'renameEnvironment',
-      'deleteEnvironment',
-      'setVariable',
-      'deleteVariable',
-      'businessPendingInfo',
-      'retryBusinessOperation',
-    ])
-      if (_has(op)) op,
-    if (_approvalVersion != 0 && _has(_approvalOperation)) 'approveDevice',
-    if (_has(_approvalInfoOperation)) 'queryApproval',
-    if (_has(_approvalRetryOperation)) 'retryApproval',
-    if (_has(_approvalCancelOperation)) 'cancelApproval',
-  });
+  Set<String> get capabilities => _dagSelected
+      ? const {}
+      : Set.unmodifiable({
+          if (_has('register')) 'registerAccount',
+          if (_has('verifyEmail')) 'verifyEmail',
+          if (_has('loginAccount')) 'loginAccount',
+          if (_has('restoreSession') && _has('businessPendingInfo'))
+            'restoreSession',
+          if (_has('beginInitialization') &&
+              _has('completeInitialization') &&
+              _has('restoreSession') &&
+              _has('businessPendingInfo'))
+            'beginInitialization',
+          if (_has('completeInitialization') &&
+              _has('restoreSession') &&
+              _has('businessPendingInfo'))
+            'completeInitialization',
+          if (_has('queryInitialization')) 'queryInitialization',
+          for (final op in const [
+            'createEnvironment',
+            'renameEnvironment',
+            'deleteEnvironment',
+            'setVariable',
+            'deleteVariable',
+            'businessPendingInfo',
+            'retryBusinessOperation',
+          ])
+            if (_has(op)) op,
+          if (_approvalVersion != 0 && _has(_approvalOperation))
+            'approveDevice',
+          if (_has(_approvalInfoOperation)) 'queryApproval',
+          if (_has(_approvalRetryOperation)) 'retryApproval',
+          if (_has(_approvalCancelOperation)) 'cancelApproval',
+        });
   String get _approvalOperation => switch (_approvalVersion) {
     2 => 'approvePairing',
     3 => 'approvePairingV3',
@@ -543,7 +708,8 @@ class NativeVaultGateway
   };
 
   void _require(String operation) {
-    if (!_has(operation) ||
+    if (_dagSelected && operation != 'logout' ||
+        !_has(operation) ||
         _endpoint.isEmpty ||
         _cleanupPending && operation != 'logout') {
       throw const GatewayFailure('此原生操作或服务范围尚未验收，当前不可用。');
@@ -769,6 +935,14 @@ class NativeVaultGateway
 
   @override
   Future<VaultSession> restoreSession() async {
+    if (_dagSelected) {
+      final reply = await executeRecovery(
+        'restoreDAGRecoveredDevice',
+        const {},
+        Uint8List(0),
+      );
+      return (reply.payload as RecoveryTrusted).session;
+    }
     _require('restoreSession');
     final projection = NativeTrustedProjection.parse(
       nativeData(await _execute('restoreSession', {})),
@@ -794,6 +968,24 @@ class NativeVaultGateway
 
   @override
   Future<VaultSnapshot> pull() async {
+    if (_dagSelected) {
+      if (_dagTrusted == null) {
+        throw const GatewayFailure('已恢复设备需重新进行正式本机验证。', suspendVault: true);
+      }
+      try {
+        final reply = await executeRecovery(
+          'pullDAGRecoveredDevice',
+          const {},
+          Uint8List(0),
+        );
+        return _dagSnapshot(reply.payload as RecoveryTrusted);
+      } catch (_) {
+        throw const GatewayFailure(
+          '已恢复设备的正式拉取未完成，明文视图已关闭；请重新验证原来源。',
+          suspendVault: true,
+        );
+      }
+    }
     if (_trusted == null) {
       throw const GatewayFailure('须先通过原生可信视图恢复，不能靠登录读取。');
     }
@@ -1160,6 +1352,7 @@ class NativeVaultGateway
       throw const GatewayFailure('设备撤销UI映射尚未验收，未执行撤销。');
   @override
   Future<void> logout() async {
+    retireRecoveryResults();
     _scopeEpoch++;
     _cleanupPending = true;
     _trusted = null;
@@ -1173,6 +1366,7 @@ class NativeVaultGateway
     _approvalProgress = const DeviceApprovalProgress(state: 'none');
     _pendingUnknown = false;
     _cleanupPending = false;
+    _dagSelected = false;
   }
 }
 

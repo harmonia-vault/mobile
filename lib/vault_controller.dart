@@ -1,6 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'recovery/recovery_presentation.dart';
+import 'recovery/recovery_gateway.dart';
+import 'recovery/recovery_coordinator.dart';
+
 import 'package:flutter/foundation.dart';
 
 import 'native/native_pin_adapter.dart';
@@ -488,12 +492,18 @@ abstract interface class SessionVaultGateway implements VaultGateway {
   Future<void> revoke(String deviceId);
 }
 
-class VaultController extends ChangeNotifier {
+class VaultController extends ChangeNotifier implements RecoveryActions {
   VaultController({
     required this.gateway,
     this.allowPreview = false,
     DateTime Function()? now,
   }) : _now = now ?? DateTime.now;
+  late final RecoveryCoordinator _recoveryFlow = RecoveryCoordinator(
+    gateway is RecoveryGateway ? gateway as RecoveryGateway : null,
+    now: _now,
+    changed: _notify,
+    onTrusted: _acceptRecoveredDevice,
+  );
   final VaultGateway gateway;
   final bool allowPreview;
   final DateTime Function() _now;
@@ -535,8 +545,10 @@ class VaultController extends ChangeNotifier {
   Timer? _formRetentionTimer;
   bool _retainedForm = false;
   int _formLifetime = 0;
+  @override
   String get sensitiveFormScope =>
       '$_epoch|$_formLifetime|${_session.accountId}|${_session.accountGeneration}|$_endpoint|${_session.stage.name}';
+  @override
   bool get retainSensitiveForm =>
       _retainedForm &&
       _privacyMask &&
@@ -606,7 +618,173 @@ class VaultController extends ChangeNotifier {
       canEnterVault ? _snapshot.environments : const [];
   List<VaultDevice> get devices => canEnterVault ? _snapshot.devices : const [];
   int get checkpoint => canEnterVault ? _snapshot.checkpoint : 0;
-  String get recoveryStatus => '连续恢复的 Flutter 业务映射尚未验收，当前入口不可用。';
+  String get recoveryStatus => recovery.status;
+  @override
+  RecoveryPresentation get recovery => _recoveryFlow.presentation(
+    available:
+        serverVerified &&
+        !_disposed &&
+        !_nativeCleanupPending &&
+        !privacyObscured &&
+        _foreground &&
+        !previewMode,
+    busy: _busy,
+  );
+  @override
+  String? get recoveryCodeForDisplay =>
+      privacyObscured || !_foreground || _disposed
+      ? null
+      : _recoveryFlow.visibleCode;
+  void _acceptRecoveredDevice(RecoveryTrusted source) {
+    if (_disposed || !_foreground || _nativeCleanupPending) return;
+    _applySession(source.session);
+    _snapshot = VaultSnapshot(
+      checkpoint: source.snapshot.checkpoint,
+      environments: source.snapshot.environments,
+      devices: [
+        VaultDevice(
+          id: source.deviceId,
+          name: '本机',
+          platform: 'Android',
+          current: true,
+          accessSummary: source.snapshot.environments
+              .map((e) => '${e.name}：${e.role.label}')
+              .join('；'),
+          expiresLabel: '按原生已验授权生效',
+        ),
+      ],
+    );
+    _phase = ConnectionPhase.online;
+  }
+
+  Future<void> _recoveryAction(
+    RecoveryAction action,
+    Future<void> Function() body, {
+    Uint8List? code,
+  }) async {
+    try {
+      if (!recovery.allows(action)) {
+        _error = recovery.unavailableReason(action);
+        _notify();
+        return;
+      }
+      await _run((epoch) async {
+        await body();
+        if (epoch == _epoch &&
+            !_disposed &&
+            !recovery.trustedDevice &&
+            (recovery.ownerAvailable || recovery.operationId != null) &&
+            _session.stage != SessionStage.restrictedRecovery) {
+          _applySession(const VaultSession(SessionStage.restrictedRecovery));
+        }
+      });
+    } finally {
+      code?.fillRange(0, code.length, 0);
+    }
+  }
+
+  @override
+  Future<void> inspectRecovery() =>
+      _recoveryAction(RecoveryAction.inspect, _recoveryFlow.inspect);
+  @override
+  Future<void> openRecovery({
+    required String email,
+    required String password,
+    required Uint8List currentCode,
+  }) => _recoveryAction(
+    RecoveryAction.open,
+    () => _recoveryFlow.open(email, password, currentCode),
+    code: currentCode,
+  );
+  @override
+  Future<void> prepareRecoveryCode() =>
+      _recoveryAction(RecoveryAction.prepareCode, _recoveryFlow.prepare);
+  @override
+  void setRecoveryCodeVisible(bool visible) =>
+      _recoveryFlow.hideCode(visible && !privacyObscured && _foreground);
+  @override
+  Future<void> sealRecoveryTransition(Uint8List completeReentry) =>
+      _recoveryAction(
+        RecoveryAction.sealTransition,
+        () => _recoveryFlow.seal(completeReentry),
+        code: completeReentry,
+      );
+  @override
+  Future<void> submitRecoveryTransition() => _recoveryAction(
+    RecoveryAction.submitTransition,
+    _recoveryFlow.submitTransition,
+  );
+  @override
+  Future<void> queryRecoveryOriginal(Uint8List completeCurrentCode) =>
+      _recoveryAction(
+        RecoveryAction.queryOriginal,
+        () => _recoveryFlow.query(completeCurrentCode),
+        code: completeCurrentCode,
+      );
+  @override
+  Future<void> loadRecoveryChoices() =>
+      _recoveryAction(RecoveryAction.loadChoices, _recoveryFlow.loadChoices);
+  @override
+  Future<void> sealRecoveryEnrollment(List<RecoverySelection> selections) =>
+      _recoveryAction(
+        RecoveryAction.sealEnrollment,
+        () => _recoveryFlow.sealEnrollment(List.unmodifiable(selections)),
+      );
+  @override
+  Future<void> submitRecoveryEnrollment() => _recoveryAction(
+    RecoveryAction.submitEnrollment,
+    _recoveryFlow.submitEnrollment,
+  );
+  @override
+  Future<void> verifyRecoveredDevice() => _recoveryAction(
+    RecoveryAction.verifyDevice,
+    () => _recoveryFlow.device('applyDAGRecoveredDevice'),
+  );
+  @override
+  Future<void> restoreRecoveredDevice() => _recoveryAction(
+    RecoveryAction.restoreDevice,
+    () => _recoveryFlow.device('restoreDAGRecoveredDevice'),
+  );
+  @override
+  Future<void> pullRecoveredDevice() => _recoveryAction(
+    RecoveryAction.pullDevice,
+    () => _recoveryFlow.device('pullDAGRecoveredDevice'),
+  );
+  @override
+  Future<void> cancelRecoveryLocally() async {
+    if (_disposed) return;
+    _retireSensitiveForm();
+    _epoch++;
+    _activeOperation = null;
+    _busy = false;
+    _suspendVault();
+    await _recoveryFlow.cancel();
+  }
+
+  @override
+  Future<void> queryRecoveryClosure(Uint8List completeCurrentCode) =>
+      _recoveryAction(
+        RecoveryAction.queryClosure,
+        () async {},
+        code: completeCurrentCode,
+      );
+  @override
+  Future<void> closeRecoveryOriginal(
+    Uint8List completeCurrentCode, {
+    required bool destructiveConfirmed,
+  }) => _recoveryAction(
+    RecoveryAction.closeOriginal,
+    () async {},
+    code: completeCurrentCode,
+  );
+  @override
+  Future<void> restartRecoveryAfterClosure(Uint8List completeCurrentCode) =>
+      _recoveryAction(
+        RecoveryAction.restartAfterClosure,
+        () async {},
+        code: completeCurrentCode,
+      );
+
   bool get restrictedRecovery =>
       _session.stage == SessionStage.restrictedRecovery;
   bool get authorizationRequestsAvailable =>
@@ -763,6 +941,7 @@ class VaultController extends ChangeNotifier {
   }
 
   void _resetLocalSession() {
+    _recoveryFlow.invalidate(reset: true);
     _retireSensitiveForm();
     _epoch++;
     _vaultSuspended = false;
@@ -1592,7 +1771,14 @@ class VaultController extends ChangeNotifier {
 
   void setForeground(bool value) {
     _foreground = value;
-    if (!value) _retireSensitiveForm();
+    if (!value) {
+      _retireSensitiveForm();
+      if (_recoveryFlow.active) {
+        _recoveryFlow.invalidate();
+        _suspendVault();
+      }
+      // native lifecycle 独立退役 registry；Dart 立即丢弃晚到返回和新码。
+    }
     if (value) {
       unawaited(refreshAuthorizationRequests());
     }
@@ -1698,6 +1884,7 @@ class VaultController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _recoveryFlow.dispose();
     _resetLocalSession();
     super.dispose();
   }
