@@ -39,6 +39,13 @@ internal class NativeSlotOwner private constructor(
     fun operationEpoch(): Long = read { lease.operationEpoch().also { check(it > 0) } }
     fun retire() = lease.retire()
     fun alive() = lease.isAlive() && !released.get()
+    /** 只验证此固定逻辑槽已跟踪的全部文件/alias；不扫描或接管其它别名。
+     * 仅能在活 owner 内调用，clear 后必须先排空释放并重新 acquire。 */
+    fun assertTrackedSlotEmpty() = read {
+        val current = snapshot()
+        try { check(current.all { it.size == 1 && it[0] == 0.toByte() }) { "native slot not empty" } }
+        finally { current.forEach { it.fill(0) } }
+    }
     override fun close() {
         lease.retire()
         if (!released.compareAndSet(false, true)) return

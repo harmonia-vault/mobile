@@ -7,6 +7,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 
 import '../vault_controller.dart';
+import '../management/management_gateway.dart';
+import '../management/management_presentation.dart';
+import 'native_management_contract.dart';
 import '../recovery/recovery_gateway.dart';
 import 'native_dag_recovery_adapter.dart';
 import 'native_business_adapter.dart';
@@ -141,6 +144,22 @@ class MethodChannelGatewayPort
       'retryApprovalV4' => a.retryApprovalV4(f('pairingId')),
       'cancelApprovalV4' => a.cancelApprovalV4(f('pairingId')),
       'retryBusinessOperation' => a.retryBusinessOperation(f('id')),
+      'managementDevices' => a.managementDevices(f('environmentId')),
+      'prepareDeviceGrant' => a.prepareDeviceGrant(
+        environmentId: f('environmentId'),
+        subjectDeviceId: f('subjectDeviceId'),
+        role: f('role'),
+        expiresAt: f('expiresAt'),
+        id: f('id'),
+      ),
+      'prepareOtherDeviceRevocation' => a.prepareOtherDeviceRevocation(
+        environmentId: f('environmentId'),
+        subjectDeviceId: f('subjectDeviceId'),
+        id: f('id'),
+      ),
+      'managementInfo' => a.managementInfo(),
+      'retryManagement' => a.retryManagement(f('id')),
+      'cancelManagement' => a.cancelManagement(f('id')),
       'logout' => a.logout(),
       _ => throw const GatewayFailure('未接通此明确原生业务意图。'),
     };
@@ -189,7 +208,8 @@ class NativeVaultGateway
         ApprovalContinuationGateway,
         BusinessPendingGateway,
         LocalProtectionGateway,
-        RecoveryGateway {
+        RecoveryGateway,
+        DeviceManagementGateway {
   NativeVaultGateway({
     required this.experimentalOptIn,
     this.productFixture = false,
@@ -197,6 +217,7 @@ class NativeVaultGateway
     Set<String>? verifiedNativeOperations,
     Set<String>? verifiedPINOperations,
     Set<String> verifiedDAGOperations = const {},
+    Set<String> verifiedManagementOperations = const {},
     DateTime Function()? now,
     Future<InstanceDescriptor> Function(String)? inspector,
   }) : _port = port ?? const MethodChannelGatewayPort(),
@@ -207,6 +228,9 @@ class NativeVaultGateway
          verifiedPINOperations ?? _pinEvidence,
        ),
        _verifiedDAGOperations = Set.unmodifiable(verifiedDAGOperations),
+       _verifiedManagementOperations = Set.unmodifiable(
+         verifiedManagementOperations,
+       ),
        _now = now ?? DateTime.now,
        _inspector = inspector ?? inspectHarmoniaInstance;
   final bool experimentalOptIn, productFixture;
@@ -215,6 +239,329 @@ class NativeVaultGateway
   final Set<String> _verifiedOperations;
   final Set<String> _verifiedPINOperations;
   final Set<String> _verifiedDAGOperations;
+  final Set<String> _verifiedManagementOperations;
+  int _managementEpoch = 0;
+  String? _managementPreparingOperation;
+  ManagementOperation _managementOperation = const ManagementOperation(
+    phase: ManagementPhase.idle,
+  );
+  @override
+  ManagementOperation get managementOperation => _managementOperation;
+  @override
+  Set<String> get managementCapabilities => Set.unmodifiable({
+    if (!_dagSelected && !_cleanupPending && _endpoint.isNotEmpty)
+      for (final op in managementOperations)
+        if (_has(op)) op,
+  });
+  @override
+  void retireManagementResults() {
+    _managementEpoch++;
+    _managementPreparingOperation = null;
+  }
+
+  bool _managementCurrent(int epoch, int scope) =>
+      epoch == _managementEpoch && scope == _scopeEpoch && !_cleanupPending;
+  ManagementOperation _managementUnknown(ManagementOperation p) =>
+      ManagementOperation(
+        phase: ManagementPhase.unknown,
+        id: p.id,
+        kind: p.kind,
+        environmentId: p.environmentId,
+        subjectDeviceId: p.subjectDeviceId,
+        attempted: p.attempted,
+        sequence: p.sequence,
+        acceptanceUnknown: true,
+        requestExpiresAt: p.requestExpiresAt,
+      );
+  void _adoptManagement(ManagementOperation next) {
+    final prior = _managementOperation;
+    if (prior.unresolved) {
+      if (next.phase == ManagementPhase.idle ||
+          prior.id != next.id ||
+          prior.kind != next.kind ||
+          prior.environmentId != next.environmentId ||
+          prior.subjectDeviceId != next.subjectDeviceId ||
+          prior.sequence > next.sequence ||
+          prior.attempted && !next.attempted) {
+        throw const GatewayFailure(
+          '原管理操作或接受下界改变；保留原ID，不能新建意图。',
+          suspendVault: true,
+        );
+      }
+    }
+    _managementOperation = next;
+  }
+
+  void _managementPermission(String environmentId) {
+    if (_trusted == null ||
+        _pendingUnknown ||
+        _managementOperation.unresolved ||
+        !_trusted!.view.environments.any(
+          (e) => e.id == environmentId && e.role == AccessRole.admin,
+        )) {
+      throw const GatewayFailure('须有当前已验Admin环境，且没有其它未决操作。');
+    }
+  }
+
+  void _invalidateManagementTrust() {
+    retireManagementResults();
+    _managementOperation = const ManagementOperation(
+      phase: ManagementPhase.idle,
+    );
+    _trusted = null;
+  }
+
+  Future<NativeManagementEnvelope> _managementCall(
+    String op,
+    Map<String, String> fields, {
+    String? originalId,
+  }) async {
+    final epoch = _managementEpoch, scope = _scopeEpoch;
+    try {
+      final raw = await _execute(op, fields, originalId: originalId);
+      if (!_managementCurrent(epoch, scope)) {
+        throw const GatewayFailure('原管理范围已退役，丢弃晚到结果。');
+      }
+      final envelope = decodeManagementEnvelope(
+        raw,
+        op,
+        originalId: originalId,
+      );
+      if (envelope.failure?.trustInvalidated == true) {
+        _invalidateManagementTrust();
+      }
+      return envelope;
+    } on NativeIntentFailure catch (error) {
+      if (_managementCurrent(epoch, scope) && error.trustInvalidated) {
+        _invalidateManagementTrust();
+      }
+      rethrow;
+    }
+  }
+
+  @override
+  Future<ManagementOperation> inspectManagement() async {
+    final result = await _managementCall('managementInfo', const {});
+    if (result.failure != null) throw result.failure!;
+    final info = decodeManagementInfo(result.data);
+    _adoptManagement(info);
+    return info;
+  }
+
+  @override
+  Future<List<ManagedDeviceAccess>> managementDevices(
+    String environmentId,
+  ) async {
+    _require('managementDevices');
+    _managementPermission(environmentId);
+    if (!nativeIdentifier(environmentId)) throw const GatewayFailure('环境标识无效。');
+    final result = await _managementCall('managementDevices', {
+      'environmentId': environmentId,
+    });
+    if (result.failure != null) throw result.failure!;
+    return decodeManagementDevices(result.data, environmentId, _deviceId);
+  }
+
+  bool _managementNotDispatched(Object error) =>
+      error is NativeIntentFailure &&
+      const {
+        'AUTH_CANCELLED',
+        'AUTH_FAILED',
+        'AUTH_UNAVAILABLE',
+        'PROTECTED_KEYS_UNAVAILABLE',
+        'BUSY',
+        'LOCKED',
+        'INVALID_COMMAND',
+        'PIN_CANCELLED',
+        'PIN_AUTH_FAILED',
+        'PIN_BLOCKED',
+      }.contains(error.code);
+  Future<ManagementOperation> _prepareManagement(
+    String op,
+    Map<String, String> fields,
+    String kind,
+  ) async {
+    _require(op);
+    _managementPermission(fields['environmentId']!);
+    if (!nativeIdentifier(fields['environmentId']!) ||
+        !nativeIdentifier(fields['subjectDeviceId']!)) {
+      throw const GatewayFailure('环境或设备标识无效。');
+    }
+    final id = _newId(), epoch = _managementEpoch, scope = _scopeEpoch;
+    final original = ManagementOperation(
+      phase: ManagementPhase.unknown,
+      id: id,
+      kind: kind,
+      environmentId: fields['environmentId']!,
+      subjectDeviceId: fields['subjectDeviceId']!,
+      acceptanceUnknown: true,
+    );
+    final prior = _managementOperation;
+    // 在原生调用前保留原ID，但尚不声称prepared或已尝试提交。
+    _managementOperation = original;
+    _managementPreparingOperation = op;
+    try {
+      final result = await _managementCall(op, {
+        ...fields,
+        'id': id,
+      }, originalId: id);
+      if (result.failure != null) throw result.failure!;
+      final info = decodeManagementInfo(result.data);
+      if (info.id != id ||
+          info.kind != kind ||
+          info.environmentId != original.environmentId ||
+          info.subjectDeviceId != original.subjectDeviceId ||
+          info.phase != ManagementPhase.prepared) {
+        throw const GatewayFailure('原准备结果与明确管理意图不一致。', suspendVault: true);
+      }
+      _managementOperation = info;
+      return info;
+    } catch (error) {
+      if (_managementCurrent(epoch, scope)) {
+        _managementOperation = _managementNotDispatched(error)
+            ? prior
+            : original;
+      }
+      rethrow;
+    } finally {
+      if (_managementCurrent(epoch, scope)) {
+        _managementPreparingOperation = null;
+      }
+    }
+  }
+
+  @override
+  Future<ManagementOperation> prepareDeviceGrant({
+    required String environmentId,
+    required String subjectDeviceId,
+    required ManagedRole role,
+    required ManagementExpiry expiry,
+  }) async {
+    if (role == ManagedRole.ungranted ||
+        role == ManagedRole.none && expiry.at != null ||
+        expiry.at != null &&
+            expiry.at!.millisecondsSinceEpoch ~/ 1000 <=
+                _now().millisecondsSinceEpoch ~/ 1000) {
+      throw const GatewayFailure('须明确选择有效角色与未来期限；移除授权使用明确的0期限。');
+    }
+    return _prepareManagement('prepareDeviceGrant', {
+      'environmentId': environmentId,
+      'subjectDeviceId': subjectDeviceId,
+      'role': role.wireValue,
+      'expiresAt': expiry.at == null
+          ? '0'
+          : (expiry.at!.millisecondsSinceEpoch ~/ 1000).toString(),
+    }, 'grant');
+  }
+
+  @override
+  Future<ManagementOperation> prepareOtherDeviceRevocation({
+    required String environmentId,
+    required String subjectDeviceId,
+  }) async {
+    if (subjectDeviceId == _deviceId) {
+      throw const GatewayFailure('此入口只能撤销其它设备，不能替代本机退出。');
+    }
+    return _prepareManagement('prepareOtherDeviceRevocation', {
+      'environmentId': environmentId,
+      'subjectDeviceId': subjectDeviceId,
+    }, 'revoke');
+  }
+
+  @override
+  Future<ManagementOperation> retryManagement(String originalId) async {
+    final original = _managementOperation;
+    if (!original.unresolved ||
+        originalId != original.id ||
+        originalId.isEmpty) {
+      throw const GatewayFailure('只能续办已保留的原管理ID。');
+    }
+    final epoch = _managementEpoch, scope = _scopeEpoch;
+    try {
+      final result = await _managementCall('retryManagement', {
+        'id': originalId,
+      }, originalId: originalId);
+      if (result.failure?.trustInvalidated == true) throw result.failure!;
+      final data = decodeManagementResult(
+        result.data,
+        originalId,
+        allowEmptyFailure: result.failure != null,
+      );
+      if (data.sequence < original.sequence ||
+          result.failure != null && data.applied) {
+        throw const GatewayFailure('原管理接受下界或失败结果不一致。', suspendVault: true);
+      }
+      if (data.accepted && !data.applied) {
+        _managementOperation = ManagementOperation(
+          phase: ManagementPhase.acceptedNotApplied,
+          id: originalId,
+          kind: original.kind,
+          environmentId: original.environmentId,
+          subjectDeviceId: original.subjectDeviceId,
+          attempted: true,
+          sequence: data.sequence,
+          requestExpiresAt: original.requestExpiresAt,
+        );
+      }
+      if (result.failure != null) throw result.failure!;
+      if (!data.canceled &&
+          (!data.accepted || !data.applied || data.acceptanceUnknown)) {
+        throw const GatewayFailure('原管理操作尚未完成，不能更新本机显示。', suspendVault: true);
+      }
+      _managementOperation = ManagementOperation(
+        phase: data.canceled
+            ? ManagementPhase.cancelled
+            : ManagementPhase.applied,
+        id: originalId,
+        kind: original.kind,
+        environmentId: original.environmentId,
+        subjectDeviceId: original.subjectDeviceId,
+        attempted: !data.canceled,
+        sequence: data.sequence,
+      );
+      return _managementOperation;
+    } catch (error) {
+      if (_managementCurrent(epoch, scope) &&
+          _managementOperation.phase != ManagementPhase.acceptedNotApplied &&
+          !_managementNotDispatched(error)) {
+        _managementOperation = _managementUnknown(original);
+      }
+      rethrow;
+    }
+  }
+
+  @override
+  Future<ManagementOperation> cancelManagement(String originalId) async {
+    final original = _managementOperation;
+    if (original.phase != ManagementPhase.prepared ||
+        original.attempted ||
+        original.id != originalId ||
+        originalId.isEmpty) {
+      throw const GatewayFailure('只有未尝试提交的prepared原操作可取消。');
+    }
+    final epoch = _managementEpoch, scope = _scopeEpoch;
+    try {
+      final result = await _managementCall('cancelManagement', {
+        'id': originalId,
+      }, originalId: originalId);
+      if (result.failure != null) throw result.failure!;
+      _managementOperation = ManagementOperation(
+        phase: ManagementPhase.cancelled,
+        id: originalId,
+        kind: original.kind,
+        environmentId: original.environmentId,
+        subjectDeviceId: original.subjectDeviceId,
+      );
+      return _managementOperation;
+    } catch (error) {
+      if (_managementCurrent(epoch, scope) &&
+          !_managementNotDispatched(error)) {
+        _managementOperation = _managementUnknown(original);
+      }
+      rethrow;
+    }
+  }
+
   int _recoveryEpoch = 0;
   bool _dagSelected = false;
   RecoveryTrusted? _dagTrusted;
@@ -439,13 +786,25 @@ class NativeVaultGateway
   bool get realVaultReady => false;
   bool _has(String operation) =>
       experimentalOptIn &&
+      (!_managementOperation.unresolved ||
+          operation == _managementPreparingOperation ||
+          const {
+            'managementInfo',
+            'retryManagement',
+            'cancelManagement',
+            'logout',
+          }.contains(operation)) &&
       _runtimeOperations.contains(operation) &&
       (_localProtection?.mode == LocalProtectionMode.pin
           ? _localProtection!.pinWorkflowReady &&
                 !_localProtection!.upgradeRequired &&
                 _localProtection!.systemCapability == 'NO_SYSTEM_AUTH' &&
+                !managementOperations.contains(operation) &&
                 _verifiedPINOperations.contains(operation)
-          : _systemStrong && _verifiedOperations.contains(operation));
+          : _systemStrong &&
+                (managementOperations.contains(operation)
+                    ? _verifiedManagementOperations.contains(operation)
+                    : _verifiedOperations.contains(operation)));
 
   @override
   void bindLocalPINCallbacks({
@@ -654,6 +1013,8 @@ class NativeVaultGateway
   Set<String> get capabilities => _dagSelected
       ? const {}
       : Set.unmodifiable({
+          for (final op in managementOperations)
+            if (_has(op)) op,
           if (_has('register')) 'registerAccount',
           if (_has('verifyEmail')) 'verifyEmail',
           if (_has('loginAccount')) 'loginAccount',
@@ -1352,6 +1713,7 @@ class NativeVaultGateway
       throw const GatewayFailure('设备撤销UI映射尚未验收，未执行撤销。');
   @override
   Future<void> logout() async {
+    retireManagementResults();
     retireRecoveryResults();
     _scopeEpoch++;
     _cleanupPending = true;
@@ -1367,6 +1729,9 @@ class NativeVaultGateway
     _pendingUnknown = false;
     _cleanupPending = false;
     _dagSelected = false;
+    _managementOperation = const ManagementOperation(
+      phase: ManagementPhase.idle,
+    );
   }
 }
 

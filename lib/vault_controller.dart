@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'recovery/recovery_presentation.dart';
+import 'management/management_presentation.dart';
+import 'management/management_gateway.dart';
 import 'recovery/recovery_gateway.dart';
 import 'recovery/recovery_coordinator.dart';
 
@@ -492,12 +494,267 @@ abstract interface class SessionVaultGateway implements VaultGateway {
   Future<void> revoke(String deviceId);
 }
 
-class VaultController extends ChangeNotifier implements RecoveryActions {
+class VaultController extends ChangeNotifier
+    implements RecoveryActions, ManagementActions {
   VaultController({
     required this.gateway,
     this.allowPreview = false,
     DateTime Function()? now,
   }) : _now = now ?? DateTime.now;
+  ManagementOperation _managementOperation = const ManagementOperation(
+    phase: ManagementPhase.idle,
+  );
+  List<ManagedDeviceAccess> _managedDevices = const [];
+  String _managedEnvironment = '',
+      _managementStatus = '先检查本机原管理操作，再读取当前Admin环境设备。';
+  String? _managementError;
+  bool _managementInspected = false, _managementRunning = false;
+  bool get _hasManagementContinuation => _managementOperation.unresolved;
+  void _clearManagementList() {
+    _managedDevices = const [];
+    _managedEnvironment = '';
+  }
+
+  void _resetManagement() {
+    if (gateway is DeviceManagementGateway) {
+      (gateway as DeviceManagementGateway).retireManagementResults();
+    }
+    _clearManagementList();
+    _managementInspected = false;
+    _managementRunning = false;
+    _managementOperation = const ManagementOperation(
+      phase: ManagementPhase.idle,
+    );
+    _managementError = null;
+    _managementStatus = '先检查本机原管理操作，再读取当前Admin环境设备。';
+  }
+
+  bool _managementAdmin(String id) => _snapshot.environments.any(
+    (e) => e.id == id && e.role == AccessRole.admin,
+  );
+  @override
+  ManagementPresentation get management {
+    final caps = gateway is DeviceManagementGateway
+        ? (gateway as DeviceManagementGateway).managementCapabilities
+        : const <String>{};
+    final available =
+        serverVerified &&
+        !_disposed &&
+        !_nativeCleanupPending &&
+        !_busy &&
+        !privacyObscured &&
+        _foreground &&
+        !previewMode;
+    final actions = <ManagementAction>{};
+    if (available) {
+      if (caps.contains('managementInfo')) {
+        actions.add(ManagementAction.inspect);
+      }
+      if (canEnterVault &&
+          !_hasManagementContinuation &&
+          caps.contains('managementDevices') &&
+          _snapshot.environments.any((e) => e.role == AccessRole.admin)) {
+        actions.add(ManagementAction.loadDevices);
+      }
+      if (canEnterVault &&
+          _phase == ConnectionPhase.online &&
+          _managementInspected &&
+          !_hasManagementContinuation &&
+          _managedEnvironment.isNotEmpty &&
+          _managementAdmin(_managedEnvironment)) {
+        if (caps.contains('prepareDeviceGrant')) {
+          actions.add(ManagementAction.prepareGrant);
+        }
+        if (caps.contains('prepareOtherDeviceRevocation') &&
+            _managedDevices.any((d) => !d.current)) {
+          actions.add(ManagementAction.prepareRevocation);
+        }
+      }
+      if (_hasManagementContinuation &&
+          _managementOperation.id.isNotEmpty &&
+          caps.contains('retryManagement')) {
+        actions.add(ManagementAction.submitOriginal);
+      }
+      if (_managementOperation.phase == ManagementPhase.prepared &&
+          !_managementOperation.attempted &&
+          caps.contains('cancelManagement')) {
+        actions.add(ManagementAction.cancelOriginal);
+      }
+    }
+    return ManagementPresentation(
+      busy: _busy,
+      environmentId: _managedEnvironment,
+      status: _managementStatus,
+      error: _managementError,
+      operation: _managementOperation,
+      devices: !privacyObscured && _foreground && !_nativeCleanupPending
+          ? _managedDevices
+          : const [],
+      actions: actions,
+    );
+  }
+
+  Future<void> _managementAction(
+    ManagementAction action,
+    Future<void> Function(int epoch) body,
+  ) async {
+    if (!management.allows(action)) {
+      _error = '此管理动作尚无当前权限、原状态或逐项实测能力。';
+      _notify();
+      return;
+    }
+    await _run((epoch) async {
+      _managementError = null;
+      _managementRunning = true;
+      try {
+        await body(epoch);
+      } on GatewayFailure catch (e) {
+        if (epoch == _epoch) _managementError = e.message;
+        rethrow;
+      } finally {
+        if (epoch == _epoch && gateway is DeviceManagementGateway) {
+          _managementRunning = false;
+          _managementOperation =
+              (gateway as DeviceManagementGateway).managementOperation;
+          if (_hasManagementContinuation) {
+            _suspendVault();
+            _clearManagementList();
+            _managementStatus = '仅续办原管理ID；prepared尚未提交，未知或accepted不代表本机已完成。';
+          }
+        }
+      }
+    });
+  }
+
+  @override
+  Future<void> inspectDeviceManagement() =>
+      _managementAction(ManagementAction.inspect, (epoch) async {
+        final result = await (gateway as DeviceManagementGateway)
+            .inspectManagement();
+        if (epoch != _epoch) return;
+        _managementOperation = result;
+        _managementInspected = true;
+        _managementStatus = result.phase == ManagementPhase.idle
+            ? '本机没有未决管理原包；设备列表仍须独立读取。'
+            : '已读取本机原管理状态，未自动提交或改权。';
+      });
+  @override
+  Future<void> loadManagedDevices(String environmentId) => _managementAction(
+    ManagementAction.loadDevices,
+    (epoch) async {
+      if (!_managementAdmin(environmentId)) {
+        throw const GatewayFailure('仅当前已验Admin环境可读取管理设备。');
+      }
+      _clearManagementList();
+      // 先查全局原管理槽，不能绕冷pending新建另一ID。
+      final pending = await (gateway as DeviceManagementGateway)
+          .inspectManagement();
+      if (epoch != _epoch) return;
+      _managementOperation = pending;
+      _managementInspected = true;
+      if (pending.unresolved) return;
+      final rows = await (gateway as DeviceManagementGateway).managementDevices(
+        environmentId,
+      );
+      if (epoch != _epoch) return;
+      await _pull(epoch);
+      if (epoch != _epoch) return;
+      if (!canEnterVault || !_managementAdmin(environmentId)) {
+        throw const GatewayFailure('当前环境管理权已改变，未显示旧管理列表。', suspendVault: true);
+      }
+      _managedDevices = List.unmodifiable(rows);
+      _managedEnvironment = environmentId;
+      _managementStatus = '显示成熟Go验证的设备ID与授权元数据；准备变更后仍需明确提交。';
+    },
+  );
+  void _validateManagedTarget(
+    String environmentId,
+    String deviceId, {
+    bool other = false,
+  }) {
+    final rows = _managedDevices
+        .where(
+          (d) => d.deviceId == deviceId && d.environmentId == environmentId,
+        )
+        .toList();
+    if (environmentId != _managedEnvironment ||
+        !_managementAdmin(environmentId) ||
+        rows.length != 1 ||
+        other && rows.single.current) {
+      throw const GatewayFailure('须从当前已验管理列表明确选择目标；其它设备撤销不适用于本机。');
+    }
+  }
+
+  @override
+  Future<void> prepareManagedDeviceGrant({
+    required String environmentId,
+    required String subjectDeviceId,
+    required ManagedRole role,
+    required ManagementExpiry expiry,
+  }) => _managementAction(ManagementAction.prepareGrant, (epoch) async {
+    _validateManagedTarget(environmentId, subjectDeviceId);
+    final result = await (gateway as DeviceManagementGateway)
+        .prepareDeviceGrant(
+          environmentId: environmentId,
+          subjectDeviceId: subjectDeviceId,
+          role: role,
+          expiry: expiry,
+        );
+    if (epoch != _epoch) return;
+    _managementOperation = result;
+    _retireSensitiveForm();
+    _managementStatus = '原授权意图已密封；尚未提交。必须明确提交同一原操作。';
+  });
+  @override
+  Future<void> prepareManagedDeviceRevocation({
+    required String environmentId,
+    required String subjectDeviceId,
+    required bool destructiveConfirmed,
+  }) => _managementAction(ManagementAction.prepareRevocation, (epoch) async {
+    if (!destructiveConfirmed) throw const GatewayFailure('整台其它设备撤销需要明确破坏性确认。');
+    _validateManagedTarget(environmentId, subjectDeviceId, other: true);
+    final result = await (gateway as DeviceManagementGateway)
+        .prepareOtherDeviceRevocation(
+          environmentId: environmentId,
+          subjectDeviceId: subjectDeviceId,
+        );
+    if (epoch != _epoch) return;
+    _managementOperation = result;
+    _retireSensitiveForm();
+    _managementStatus = '其它设备撤销原包已密封；未声称服务器撤销生效，需明确提交。';
+  });
+  Future<void> _finishManagement(ManagementOperation result, int epoch) async {
+    _managementOperation = result;
+    _clearManagementList();
+    _retireSensitiveForm();
+    // 即使本机被自己降权，也只从正式恢复与Pull显示剩余权限。
+    final session = await (gateway as SessionVaultGateway).restoreSession();
+    if (epoch != _epoch) return;
+    _applySession(session);
+    await _pullRestoredSession(epoch);
+    if (epoch != _epoch) return;
+    _managementStatus = result.phase == ManagementPhase.cancelled
+        ? '原未提交管理包已确认取消；当前视图已重新验证。'
+        : '原管理操作已接受并本机应用；当前权限已重新拉取。';
+  }
+
+  @override
+  Future<void> submitOriginalManagement() =>
+      _managementAction(ManagementAction.submitOriginal, (epoch) async {
+        final result = await (gateway as DeviceManagementGateway)
+            .retryManagement(_managementOperation.id);
+        if (epoch != _epoch) return;
+        await _finishManagement(result, epoch);
+      });
+  @override
+  Future<void> cancelOriginalManagement() =>
+      _managementAction(ManagementAction.cancelOriginal, (epoch) async {
+        final result = await (gateway as DeviceManagementGateway)
+            .cancelManagement(_managementOperation.id);
+        if (epoch != _epoch) return;
+        await _finishManagement(result, epoch);
+      });
+
   late final RecoveryCoordinator _recoveryFlow = RecoveryCoordinator(
     gateway is RecoveryGateway ? gateway as RecoveryGateway : null,
     now: _now,
@@ -635,7 +892,7 @@ class VaultController extends ChangeNotifier implements RecoveryActions {
       privacyObscured || !_foreground || _disposed
       ? null
       : _recoveryFlow.visibleCode;
-  void _acceptRecoveredDevice(RecoveryTrusted source) {
+  void _acceptRecoveredDevice(RecoveryTrusted source, String nativeOperation) {
     if (_disposed || !_foreground || _nativeCleanupPending) return;
     _applySession(source.session);
     _snapshot = VaultSnapshot(
@@ -654,7 +911,9 @@ class VaultController extends ChangeNotifier implements RecoveryActions {
         ),
       ],
     );
-    _phase = ConnectionPhase.online;
+    _phase = nativeOperation == 'restoreDAGRecoveredDevice'
+        ? ConnectionPhase.offline
+        : ConnectionPhase.online;
   }
 
   Future<void> _recoveryAction(
@@ -941,6 +1200,7 @@ class VaultController extends ChangeNotifier implements RecoveryActions {
   }
 
   void _resetLocalSession() {
+    _resetManagement();
     _recoveryFlow.invalidate(reset: true);
     _retireSensitiveForm();
     _epoch++;
@@ -976,6 +1236,7 @@ class VaultController extends ChangeNotifier implements RecoveryActions {
     }
     if (session.accountId != _session.accountId ||
         session.accountGeneration != _session.accountGeneration) {
+      _clearManagementList();
       _requests.clear();
       _requestVersions.clear();
       _prompted.clear();
@@ -1106,6 +1367,9 @@ class VaultController extends ChangeNotifier implements RecoveryActions {
       VaultPage.initialization,
     }.contains(next.page)) {
       return _session.stage == SessionStage.deviceAuthorization;
+    }
+    if (_hasManagementContinuation && next.page == VaultPage.devices) {
+      return true;
     }
     if (!canEnterVault) return false;
     if ({
@@ -1243,6 +1507,7 @@ class VaultController extends ChangeNotifier implements RecoveryActions {
     if (_accessReduced(_snapshot, pulled)) {
       // 同账号的撤销/降权/环境消失同样终止旧表单，不能只检查trusted。
       _retireSensitiveForm();
+      _clearManagementList();
     }
     _snapshot = pulled;
     _phase = previewMode ? ConnectionPhase.preview : ConnectionPhase.online;
@@ -1253,8 +1518,9 @@ class VaultController extends ChangeNotifier implements RecoveryActions {
   }
 
   bool get _hasBusinessContinuation =>
+      _hasManagementContinuation ||
       _session.stage == SessionStage.trusted &&
-      _businessPending.any((item) => item.canRetry);
+          _businessPending.any((item) => item.canRetry);
 
   // 自动恢复后的读取不能隐藏原ID入口；通用_pull仍保留全部原门槛。
   Future<void> _pullRestoredSession(int epoch) async {
@@ -1773,6 +2039,11 @@ class VaultController extends ChangeNotifier implements RecoveryActions {
     _foreground = value;
     if (!value) {
       _retireSensitiveForm();
+      _clearManagementList();
+      if (_managementRunning) _suspendVault();
+      if (gateway is DeviceManagementGateway) {
+        (gateway as DeviceManagementGateway).retireManagementResults();
+      }
       if (_recoveryFlow.active) {
         _recoveryFlow.invalidate();
         _suspendVault();

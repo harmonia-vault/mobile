@@ -53,14 +53,27 @@ class NativeBridgePlugin internal constructor(
         { recoveryRegistry.invalidate() }, { nativeCertificates() }, pinOwnerGate::register)
 
     // 封闭 native-only DAG consumer：不注册MethodChannel，普通/Flutter cap不变。
-    private val dagDispatcher = NativeDAGRecoveryDispatcher(activity, this.store, workflowFilename,
-        ::nativeCertificates, ::acceptsEndpoint, { !disposed && !busy.get() }, pinDispatcher::hasArtifacts)
+    private val dagDispatcher: NativeDAGRecoveryDispatcher = NativeDAGRecoveryDispatcher(activity, this.store, workflowFilename,
+        ::nativeCertificates, ::acceptsEndpoint, { !disposed && !busy.get() && !resetDispatcher.isBusy() }, pinDispatcher::hasArtifacts)
+    private val resetDispatcher: NativeAccountResetDispatcher = NativeAccountResetDispatcher(activity, this.store, workflowFilename,
+        ::nativeCertificates, ::acceptsEndpoint, { !disposed && !busy.get() && !dagDispatcher.isBusy() },
+        pinDispatcher::hasArtifacts, { recoveryRegistry.clear() }, { endpoint, completed ->
+            // 既有 cancel completion 在 DAG worker 的 registry.Close/owner release 之后交付。
+            val command = JSONObject(mapOf("version" to 1, "operation" to "cancelDAGRecoveryOwner", "endpoint" to endpoint)).toString()
+            dagDispatcher.execute(command, ByteArray(0)) { _, error -> completed(error) }
+        })
     internal fun executeNativeDAG(command: String, code: ByteArray, completion: NativeDAGRecoveryDispatcher.Completion) = dagDispatcher.execute(command, code, completion)
-    internal fun onHostResumed(deviceUnlocked: Boolean) = dagDispatcher.onResumed(deviceUnlocked)
-    internal fun onHostPaused() = dagDispatcher.onPaused()
-    internal fun onHostStopped() = dagDispatcher.onStopped()
-    internal fun onHostUserLeaveHint() = dagDispatcher.onUserLeaveHint()
-    internal fun onHostScreenOff() = dagDispatcher.onScreenOff()
+    internal fun beginNativeAccountReset(endpoint: String, proof: ByteArray, completion: NativeAccountResetDispatcher.Completion) = resetDispatcher.begin(endpoint, proof, completion)
+    internal fun queryOnlyNativeAccountReset(endpoint: String, proof: ByteArray, completion: NativeAccountResetDispatcher.Completion) = resetDispatcher.beginQueryOnly(endpoint, proof, completion)
+    internal fun queryNativeAccountReset(completion: NativeAccountResetDispatcher.Completion) = resetDispatcher.query(completion)
+    internal fun prepareNativeAccountReset(password: ByteArray, confirmation: String, completion: NativeAccountResetDispatcher.Completion) = resetDispatcher.prepare(password, confirmation, completion)
+    internal fun completeNativeAccountReset(completion: NativeAccountResetDispatcher.Completion) = resetDispatcher.complete(completion)
+    internal fun cancelNativeAccountReset() = resetDispatcher.invalidate()
+    internal fun onHostResumed(deviceUnlocked: Boolean) { dagDispatcher.onResumed(deviceUnlocked); resetDispatcher.onResumed(deviceUnlocked) }
+    internal fun onHostPaused() { dagDispatcher.onPaused(); resetDispatcher.onPaused() }
+    internal fun onHostStopped() { dagDispatcher.onStopped(); resetDispatcher.onStopped() }
+    internal fun onHostUserLeaveHint() { dagDispatcher.onUserLeaveHint(); resetDispatcher.onUserLeaveHint() }
+    internal fun onHostScreenOff() { dagDispatcher.onScreenOff(); resetDispatcher.onScreenOff() }
 
     init {
         check(productFixture == null || additionalCA.contentEquals(productFixture.publicCA()))
@@ -96,6 +109,7 @@ class NativeBridgePlugin internal constructor(
             "createDevice" -> {
                 if (call.arguments != null) { invalid(result); return }
                 dagDispatcher.invalidate()
+                resetDispatcher.invalidate()
                 authenticated(result, create = true, command = null)
             }
             "workflowProfile" -> {
@@ -119,7 +133,7 @@ class NativeBridgePlugin internal constructor(
                 if (command == null || command.toByteArray(Charsets.UTF_8).size > 32768) { invalid(result); return }
                 if (!acceptsWorkflowEndpoint(command)) { invalid(result); return }
                 // 仅本地RAM撤销；真正Logout仍经原Go严格DTO与系统认证。
-                try { if (JSONObject(command).optString("operation") == "logout") dagDispatcher.invalidate() } catch (_: Exception) { }
+                try { if (JSONObject(command).optString("operation") == "logout") { dagDispatcher.invalidate(); resetDispatcher.invalidate() } } catch (_: Exception) { }
                 authenticated(result, create = false, command = command, workflow = true)
             }
             "executeUnlocked" -> {
@@ -137,6 +151,7 @@ class NativeBridgePlugin internal constructor(
         if (!acceptsEndpoint(request.endpoint)) { request.close(); invalid(result); return }
         // PIN业务不接DAG owner，任一模式切换/forget前先撤销本槽DAG RAM。
         dagDispatcher.invalidate()
+        resetDispatcher.invalidate()
         if (!acquire(result)) { request.close(); return }
         pendingPIN = request
         worker.execute {
@@ -175,7 +190,7 @@ class NativeBridgePlugin internal constructor(
 
     private fun invalid(result: MethodChannel.Result) = result.error("INVALID_COMMAND", "原生业务请求不符合协议。", null)
     private fun acquire(result: MethodChannel.Result): Boolean {
-        if (dagDispatcher.isBusy() || !busy.compareAndSet(false, true)) { result.error("BUSY", "已有原生业务操作正在进行。", null); return false }
+        if (dagDispatcher.isBusy() || resetDispatcher.isBusy() || !busy.compareAndSet(false, true)) { result.error("BUSY", "已有原生业务操作正在进行。", null); return false }
         return true
     }
     private fun finish(result: MethodChannel.Result, value: Any? = null, code: String? = null) {
@@ -347,6 +362,7 @@ class NativeBridgePlugin internal constructor(
         // 所有owner分别尝试关闭；某一取消失败也不能阻止其它输入/通道退役。
         var failed = false
         try { dagDispatcher.dispose() } catch (_: Exception) { failed = true }
+        try { resetDispatcher.dispose() } catch (_: Exception) { failed = true }
         try { pinOwnerGate.retire { disposed = true } } catch (_: Exception) { failed = true }
         try { activeWorkflow?.invalidate() } catch (_: Exception) { failed = true }
         try { recoveryRegistry.invalidate() } catch (_: Exception) { failed = true }

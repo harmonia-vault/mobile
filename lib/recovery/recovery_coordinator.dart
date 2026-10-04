@@ -20,7 +20,7 @@ class RecoveryCoordinator {
   }) : now = now ?? DateTime.now;
   final RecoveryGateway? gateway;
   final void Function() changed;
-  final void Function(RecoveryTrusted) onTrusted;
+  final void Function(RecoveryTrusted, String nativeOperation) onTrusted;
   final DateTime Function() now;
   int _epoch = 0;
   bool _inspected = false, _owner = false, _visible = false, _trusted = false;
@@ -592,7 +592,9 @@ class RecoveryCoordinator {
     _choices = null;
     _trusted = true;
     _stage = RecoveryStage.trusted;
-    _status = '正式本机验证和保存已完成；仍为实验性功能。';
-    onTrusted(trusted);
+    _status = operation == 'restoreDAGRecoveredDevice'
+        ? '已保存来源通过本机复验；当前为离线缓存读取，尚未确认网络状态。'
+        : '正式网络拉取、本机验证和保存已完成；仍为实验性功能。';
+    onTrusted(trusted, operation);
   });
 }

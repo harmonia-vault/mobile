@@ -618,6 +618,10 @@ void main() {
     await c.restoreRecoveredDevice();
     expect(c.canEnterVault, true);
     expect(f.dagCalls.last.$1, 'restoreDAGRecoveredDevice');
+    expect(c.phase, ConnectionPhase.offline);
+    expect(c.recovery.status, contains('离线'));
+    await c.pullRecoveredDevice();
+    expect(c.phase, ConnectionPhase.online);
     final previous = f.calls.length;
     await expectLater(
       g.loginAccount('synthetic@example.invalid', 'synthetic-only'),
