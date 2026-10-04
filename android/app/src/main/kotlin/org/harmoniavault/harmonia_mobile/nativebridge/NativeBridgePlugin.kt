@@ -56,20 +56,25 @@ class NativeBridgePlugin internal constructor(
 
     // 严格 typed 原生入口；编译能力与逐项独立运行证据分开，whole ready仍关闭。
     private val dagDispatcher: NativeDAGRecoveryDispatcher = NativeDAGRecoveryDispatcher(activity, this.store, workflowFilename,
-        ::nativeCertificates, ::acceptsEndpoint, { !disposed && !ownerCleanupUnconfirmed.get() && !busy.get() && !resetDispatcher.isBusy() && !pendingPairingsBusy() && !mailBusy() }, pinDispatcher::hasArtifacts, endpointScope::workflowOpened)
+        ::nativeCertificates, ::acceptsEndpoint, { !disposed && !ownerCleanupUnconfirmed.get() && !busy.get() && !dagBusinessBusy() && !resetDispatcher.isBusy() && !pendingPairingsBusy() && !mailBusy() }, pinDispatcher::hasArtifacts, endpointScope::workflowOpened)
     private val pendingPairingsDispatcher: NativePendingPairingsDispatcher = NativePendingPairingsDispatcher(activity, this.store, workflowFilename,
-        ::nativeCertificates, ::acceptsEndpoint, { !disposed && !ownerCleanupUnconfirmed.get() && !busy.get() && !dagDispatcher.isBusy() && !resetDispatcher.isBusy() && !mailBusy() }, pinDispatcher::hasArtifacts, endpointScope::workflowOpened)
+        ::nativeCertificates, ::acceptsEndpoint, { !disposed && !ownerCleanupUnconfirmed.get() && !busy.get() && !dagBusinessBusy() && !dagDispatcher.isBusy() && !resetDispatcher.isBusy() && !mailBusy() }, pinDispatcher::hasArtifacts, endpointScope::workflowOpened)
     private val resetMailDispatcher: NativeAccountResetMailDispatcher = NativeAccountResetMailDispatcher(activity, workflowFilename,
-        ::nativeCertificates, ::acceptsEndpoint, { !disposed && !ownerCleanupUnconfirmed.get() && !busy.get() && !dagDispatcher.isBusy() && !pendingPairingsBusy() && !resetDispatcher.isBusy() && !resetDispatcher.hasOwner() })
+        ::nativeCertificates, ::acceptsEndpoint, { !disposed && !ownerCleanupUnconfirmed.get() && !busy.get() && !dagBusinessBusy() && !dagDispatcher.isBusy() && !pendingPairingsBusy() && !resetDispatcher.isBusy() && !resetDispatcher.hasOwner() })
     private val resetDispatcher: NativeAccountResetDispatcher = NativeAccountResetDispatcher(activity, this.store, workflowFilename,
-        ::nativeCertificates, ::acceptsEndpoint, { !disposed && !ownerCleanupUnconfirmed.get() && !busy.get() && !dagDispatcher.isBusy() && !pendingPairingsBusy() && !mailBusy() },
+        ::nativeCertificates, ::acceptsEndpoint, { !disposed && !ownerCleanupUnconfirmed.get() && !busy.get() && !dagBusinessBusy() && !dagDispatcher.isBusy() && !pendingPairingsBusy() && !mailBusy() },
         pinDispatcher::hasArtifacts, { recoveryRegistry.clear() }, ::drainOwnersForReset)
+    private val dagBusinessDispatcher: NativeDAGBusinessDispatcher = NativeDAGBusinessDispatcher(activity, this.store, workflowFilename,
+        ::nativeCertificates, ::acceptsEndpoint, { !disposed && !ownerCleanupUnconfirmed.get() && !busy.get() && !dagDispatcher.isBusy() && !pendingPairingsBusy() && !mailBusy() && !resetDispatcher.isBusy() },
+        pinDispatcher::hasArtifacts, endpointScope::workflowOpened)
+    private fun dagBusinessBusy() = dagBusinessDispatcher.isBusy()
     private fun pendingPairingsBusy() = pendingPairingsDispatcher.isBusy()
     private fun mailBusy() = resetMailDispatcher.isBusy()
 
     /** Query成功后才调用。每个 owner 精确退休；普通 worker fence在其 finally 清钥之后。 */
     private fun drainOwnersForReset(endpoint: String, completed: (String?) -> Unit) {
         NativeOwnerDrainBarrier.all(listOf(
+            { done -> dagBusinessDispatcher.cancelAndDrain(done) },
             { done -> pendingPairingsDispatcher.cancelAndDrain(done) },
             { done -> resetMailDispatcher.cancelAndDrain(done) },
             { done ->
@@ -88,7 +93,7 @@ class NativeBridgePlugin internal constructor(
         }
     }
     internal fun executeNativeDAG(command: String, code: ByteArray, completion: NativeDAGRecoveryDispatcher.Completion) {
-        pendingPairingsDispatcher.invalidate(); resetMailDispatcher.invalidate()
+        pendingPairingsDispatcher.invalidate(); resetMailDispatcher.invalidate(); dagBusinessDispatcher.invalidate()
         dagDispatcher.execute(command, code, completion)
     }
     internal fun beginNativeAccountReset(endpoint: String, proof: ByteArray, completion: NativeAccountResetDispatcher.Completion) = resetDispatcher.begin(endpoint, proof, completion)
@@ -97,11 +102,11 @@ class NativeBridgePlugin internal constructor(
     internal fun prepareNativeAccountReset(password: ByteArray, confirmation: String, completion: NativeAccountResetDispatcher.Completion) = resetDispatcher.prepare(password, confirmation, completion)
     internal fun completeNativeAccountReset(completion: NativeAccountResetDispatcher.Completion) = resetDispatcher.complete(completion)
     internal fun cancelNativeAccountReset() = resetDispatcher.invalidate()
-    internal fun onHostResumed(deviceUnlocked: Boolean) { dagDispatcher.onResumed(deviceUnlocked); resetDispatcher.onResumed(deviceUnlocked); pendingPairingsDispatcher.onResumed(deviceUnlocked); resetMailDispatcher.onResumed(deviceUnlocked) }
-    internal fun onHostPaused() { dagDispatcher.onPaused(); resetDispatcher.onPaused(); pendingPairingsDispatcher.onPaused(); resetMailDispatcher.onPaused() }
-    internal fun onHostStopped() { dagDispatcher.onStopped(); resetDispatcher.onStopped(); pendingPairingsDispatcher.onStopped(); resetMailDispatcher.onStopped() }
-    internal fun onHostUserLeaveHint() { dagDispatcher.onUserLeaveHint(); resetDispatcher.onUserLeaveHint(); pendingPairingsDispatcher.onUserLeaveHint(); resetMailDispatcher.onUserLeaveHint() }
-    internal fun onHostScreenOff() { dagDispatcher.onScreenOff(); resetDispatcher.onScreenOff(); pendingPairingsDispatcher.onScreenOff(); resetMailDispatcher.onScreenOff() }
+    internal fun onHostResumed(deviceUnlocked: Boolean) { dagDispatcher.onResumed(deviceUnlocked); resetDispatcher.onResumed(deviceUnlocked); pendingPairingsDispatcher.onResumed(deviceUnlocked); resetMailDispatcher.onResumed(deviceUnlocked); dagBusinessDispatcher.onResumed(deviceUnlocked) }
+    internal fun onHostPaused() { dagDispatcher.onPaused(); resetDispatcher.onPaused(); pendingPairingsDispatcher.onPaused(); resetMailDispatcher.onPaused(); dagBusinessDispatcher.onPaused() }
+    internal fun onHostStopped() { dagDispatcher.onStopped(); resetDispatcher.onStopped(); pendingPairingsDispatcher.onStopped(); resetMailDispatcher.onStopped(); dagBusinessDispatcher.onStopped() }
+    internal fun onHostUserLeaveHint() { dagDispatcher.onUserLeaveHint(); resetDispatcher.onUserLeaveHint(); pendingPairingsDispatcher.onUserLeaveHint(); resetMailDispatcher.onUserLeaveHint(); dagBusinessDispatcher.onUserLeaveHint() }
+    internal fun onHostScreenOff() { dagDispatcher.onScreenOff(); resetDispatcher.onScreenOff(); pendingPairingsDispatcher.onScreenOff(); resetMailDispatcher.onScreenOff(); dagBusinessDispatcher.onScreenOff() }
 
     init {
         check(productFixture == null || additionalCA.contentEquals(productFixture.publicCA()))
@@ -111,11 +116,12 @@ class NativeBridgePlugin internal constructor(
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         // 字节请求先经过消费解析；关闭/格式失败也清理传入缓冲。
         if (call.method == "executeDAGRecovery") { dagRecoveryMethod(call, result); return }
+        if (call.method == "executeDAGBusiness") { dagBusinessMethod(call, result); return }
         if (call.method in NativeAccountResetChannelRequest.METHODS) { accountResetMethod(call, result); return }
         if (disposed) { result.error("LOCKED", "原生桥已关闭。", null); return }
         if (call.method in PinMethodChannelDispatcher.METHODS) { pinMethod(call, result); return }
         if (call.method in setOf("createDevice", "executeApproval", "executeEnrollment", "executeWorkflow", "executeUnlocked")) {
-            pendingPairingsDispatcher.invalidate(); resetMailDispatcher.invalidate()
+            pendingPairingsDispatcher.invalidate(); resetMailDispatcher.invalidate(); dagBusinessDispatcher.invalidate()
         }
         when (call.method) {
             "fixtureConnectionInfo" -> {
@@ -133,6 +139,8 @@ class NativeBridgePlugin internal constructor(
                         // 仅表示PIN业务ABI已接入；资格/受保护状态/逐项证据仍另行检查。
                         "appPINWorkflowReady" to true,
                         "nativeDAGOwnerCancellation" to true,
+                        // 仅实际编译入口声明；独立业务 profile 与 verified op 交集仍须实测。
+                        "nativeDAGBusiness" to true,
                         "nativePendingPairingRequestsV3" to true, "nativePendingPairingRequestsV4" to true,
                         "nativeAccountReset" to true, "nativeAccountResetEmailRequest" to true,
                         "realVaultReady" to false, "softwareDeviceKeys" to true))
@@ -156,6 +164,10 @@ class NativeBridgePlugin internal constructor(
             "dagWorkflowProfile" -> {
                 if (call.arguments != null) { invalid(result); return }
                 runWorker(result) { Mobilebridge.dagWorkflowProfile() }
+            }
+            "dagBusinessProfile" -> {
+                if (call.arguments != null) { invalid(result); return }
+                runWorker(result) { Mobilebridge.dagBusinessProfile() }
             }
             "executePendingPairings" -> {
                 if (ownerCleanupUnconfirmed.get()) { deliverTyped(result, null, "LOCAL_PROTECTION_PERSISTENCE"); return }
@@ -195,7 +207,7 @@ class NativeBridgePlugin internal constructor(
     }
 
     private fun pinMethod(call: MethodCall, result: MethodChannel.Result) {
-        pendingPairingsDispatcher.invalidate(); resetMailDispatcher.invalidate()
+        pendingPairingsDispatcher.invalidate(); resetMailDispatcher.invalidate(); dagBusinessDispatcher.invalidate()
         val request = try { PinChannelRequest.parse(call.method, call.arguments) }
             catch (_: Exception) { invalid(result); return }
         if (!acceptsEndpoint(request.endpoint)) { request.close(); invalid(result); return }
@@ -249,6 +261,19 @@ class NativeBridgePlugin internal constructor(
             }
         }
     }
+    private fun dagBusinessMethod(call: MethodCall, result: MethodChannel.Result) {
+        val request = try { NativeDAGBusinessChannelRequest.parse(call.arguments) }
+            catch (_: Exception) { invalid(result); return }
+        request.use {
+            if (disposed) { result.error("LOCKED", "原生桥已关闭。", null); return }
+            if (ownerCleanupUnconfirmed.get()) { deliverTyped(result, null, "LOCAL_PROTECTION_PERSISTENCE"); return }
+            val once = AtomicBoolean()
+            // Dispatcher 在认证前用成熟 Go Validate 唯一判定 DTO，再接管独立 value 缓冲。
+            dagBusinessDispatcher.execute(request) { value, error ->
+                if (once.compareAndSet(false, true) && !disposed) deliverTyped(result, value, error)
+            }
+        }
+    }
     private fun accountResetMethod(call: MethodCall, result: MethodChannel.Result) {
         val request = try { NativeAccountResetChannelRequest.parse(call.method, call.arguments) }
             catch (_: Exception) { invalid(result); return }
@@ -257,7 +282,7 @@ class NativeBridgePlugin internal constructor(
             if (ownerCleanupUnconfirmed.get() && request.method != "cancelAccountReset") { deliverTyped(result, null, "LOCAL_PROTECTION_PERSISTENCE"); return }
             if (request.endpoint.isNotEmpty()) {
                 // BUSY拒绝不能在cold状态先固定另一地址，影响已在等待认证的opener。
-                if (busy.get() || dagDispatcher.isBusy() || pendingPairingsBusy() || mailBusy() || resetDispatcher.isBusy() ||
+                if (busy.get() || dagBusinessBusy() || dagDispatcher.isBusy() || pendingPairingsBusy() || mailBusy() || resetDispatcher.isBusy() ||
                     (request.method == "requestAccountResetEmail" && resetDispatcher.hasOwner())) {
                     deliverTyped(result, null, "BUSY"); return
                 }
@@ -281,7 +306,7 @@ class NativeBridgePlugin internal constructor(
                     { done -> resetMailDispatcher.cancelAndDrain(done) },
                     { done -> resetDispatcher.cancelAndDrain(done) },
                 )) { error ->
-                    if (error == null) endpointScope.releaseResetFlow(!busy.get() && !dagDispatcher.hasOwner() && !pendingPairingsBusy())
+                    if (error == null) endpointScope.releaseResetFlow(!busy.get() && !dagBusinessBusy() && !dagDispatcher.hasOwner() && !pendingPairingsBusy())
                     completion.complete(null, error)
                 }
             }
@@ -297,7 +322,7 @@ class NativeBridgePlugin internal constructor(
     private fun invalid(result: MethodChannel.Result) = result.error("INVALID_COMMAND", "原生业务请求不符合协议。", null)
     private fun acquire(result: MethodChannel.Result): Boolean {
         if (ownerCleanupUnconfirmed.get()) { result.error("LOCAL_PROTECTION_PERSISTENCE", "本机资源排空未确认。", null); return false }
-        if (dagDispatcher.isBusy() || resetDispatcher.isBusy() || pendingPairingsBusy() || mailBusy() || !busy.compareAndSet(false, true)) { result.error("BUSY", "已有原生业务操作正在进行。", null); return false }
+        if (dagBusinessBusy() || dagDispatcher.isBusy() || resetDispatcher.isBusy() || pendingPairingsBusy() || mailBusy() || !busy.compareAndSet(false, true)) { result.error("BUSY", "已有原生业务操作正在进行。", null); return false }
         return true
     }
     private fun finish(result: MethodChannel.Result, value: Any? = null, code: String? = null) {
@@ -479,6 +504,7 @@ class NativeBridgePlugin internal constructor(
         // 所有owner分别尝试关闭；某一取消失败也不能阻止其它输入/通道退役。
         var failed = false
         endpointScope.dispose()
+        try { dagBusinessDispatcher.dispose() } catch (_: Exception) { failed = true }
         try { resetMailDispatcher.dispose() } catch (_: Exception) { failed = true }
         try { pendingPairingsDispatcher.dispose() } catch (_: Exception) { failed = true }
         try { dagDispatcher.dispose() } catch (_: Exception) { failed = true }

@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "dateUTC": "2026-10-04",
+  "scope": "DAG recovered-source variable business host build and static platform integration",
+  "sourceProvenance": {
+    "corePublicBase": "28a35f286e9ff4bafabf62c0daedca84e0530de3",
+    "coreOverlayManifestSHA256": "1ff27b2a04ddb202c1d5a7ed3b1b767fd504d5f00a4759df20546611f745bc64",
+    "coreOverlayFiles": 15,
+    "workspaceAcceptanceFilesReferenceOnly": 1,
+    "mobilePublicBase": "951e09d286bcb744e0c7471cfb4acc7823b13876",
+    "androidOverlayManifestSHA256": "f188288e85a1f85f5169772ea0d939e8bd82f9cc4294af14d2f41e79c8f014a8",
+    "androidOverlayFiles": 5,
+    "androidMainProductionOverlayFiles": 3,
+    "dartManifestSHA256": "f40f9f863bb19b8ceb40f76f1c180bbc776bc3d92b1cb8528e7b18eec086b2ad",
+    "dartFilesReferenceOnly": 7,
+    "dartIncludedInAARInputs": false,
+    "workspaceAcceptanceIncludedInAARInputs": false
+  },
+  "AAR": {
+    "status": "PASS",
+    "target": "android/arm64",
+    "androidMinimumAPI": 30,
+    "type": "normal gomobile library",
+    "seconds": 27.946,
+    "sha256": "0d0dfd2b4b4f1b3d643164ece2d73e8b6dbf217e9f5c498711f202fade6f8998",
+    "classesSHA256": "1e9a0e304dda1a547dd5658c313289e1f6349c8bf80dcd4ed06bffff8ccf8480",
+    "JNI_SHA256": "59d59b0f75bbc5b442e97e95b05aec1ab4c3fc7df953a95b4d790993f990ba2a",
+    "sourceSnapshotEntries": 675,
+    "GoSnapshotEntries": 569,
+    "BoringSSLInputs": 106,
+    "inputSourcesUnchanged": true,
+    "bindsPerformed": 1
+  },
+  "JavaABI": {
+    "status": "PASS",
+    "methodChecks": [
+      "Mobilebridge.dagBusinessProfile() -> String",
+      "Mobilebridge.validateDAGBusinessCommand(String) -> void",
+      "VaultWorkflow.executeDAGBusiness(String, byte[]) -> String"
+    ],
+    "actualJavap": true
+  },
+  "API36Kotlin": {
+    "status": "PASS",
+    "seconds": 16.426,
+    "nativeAndMainActivitySourceEntries": 33,
+    "includesOneCompileOnlyBuildConfigStub": true,
+    "fullFlutterAppBuilt": false,
+    "compileLogBytes": 0,
+    "candidateJarSHA256": "628efdccc634767ab24ad63c47571b08fd44a8f1a019f8650f4fdda90278bd39"
+  },
+  "existingEvidencePreserved": {
+    "androidChannelHostCases": 14,
+    "repeatedInThisRun": false,
+    "dartAffectedBusinessCases": 76,
+    "dagBusinessCasesWithinAffected": 13,
+    "dartAnalyzeSeconds": 3.1,
+    "dartEvidenceReferenceOnly": true,
+    "oldV1FreezePreserved": true,
+    "preOverlayMissingDocumentMirrorFailurePreserved": true,
+    "correctionWasExactApprovedDocumentCopyBeforeBuild": true
+  },
+  "runtime": {
+    "JNIExecution": "UNRUN",
+    "AndroidSDKAuthentication": "UNRUN",
+    "FlutterAppBuild": "UNRUN",
+    "FlutterProductInteraction": "UNRUN"
+  },
+  "capabilityState": {
+    "verifiedDAGBusinessOperationsDefault": [],
+    "newVerifiedCapabilitiesEnabled": false,
+    "realVaultReady": false,
+    "P1Complete": false
+  },
+  "nextRequired": [
+    "same-source actual platform and Flutter recovered-variable flow",
+    "DAG environment CRUD and rotation",
+    "per-environment RO/RW/Admin expiry and revocation",
+    "DAG manager and CLI authorization source support"
+  ],
+  "privateInputAndBuildHashesFrozen": true,
+  "liveSourceOrSharedAARChanged": false
+}

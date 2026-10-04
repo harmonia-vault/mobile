@@ -21,6 +21,8 @@ import '../management/management_presentation.dart';
 import 'native_management_contract.dart';
 import '../recovery/recovery_gateway.dart';
 import 'native_dag_recovery_adapter.dart';
+import 'native_dag_business_adapter.dart';
+import '../dag_business/dag_business_gateway.dart';
 import 'native_business_adapter.dart';
 import 'native_fixture_connection.dart';
 import 'native_pin_adapter.dart';
@@ -62,8 +64,24 @@ class MethodChannelGatewayPort
         NativeLocalProtectionPort,
         NativeDAGRecoveryPort,
         NativeDAGProfilePort,
-        NativePendingPairingsPort {
+        NativePendingPairingsPort,
+        NativeDAGBusinessPort {
   const MethodChannelGatewayPort();
+  @override
+  Future<Map<String, Object?>> dagBusinessProfile() =>
+      const NativeDAGBusinessAdapter().dagBusinessProfile();
+  @override
+  Future<Map<String, Object?>> executeDAGBusiness(
+    String endpoint,
+    String operation,
+    Map<String, String> fields,
+    Uint8List value,
+  ) => const NativeDAGBusinessAdapter().executeDAGBusiness(
+    endpoint,
+    operation,
+    fields,
+    value,
+  );
   @override
   Future<Map<String, Object?>> executePendingPairings(
     String endpoint,
@@ -233,7 +251,8 @@ class NativeVaultGateway
         RecoveryGateway,
         DeviceManagementGateway,
         PendingPairingGateway,
-        AccountResetGatewayProvider {
+        AccountResetGatewayProvider,
+        DAGBusinessGateway {
   NativeVaultGateway({
     required this.experimentalOptIn,
     this.productFixture = false,
@@ -241,6 +260,7 @@ class NativeVaultGateway
     Set<String>? verifiedNativeOperations,
     Set<String>? verifiedPINOperations,
     Set<String> verifiedDAGOperations = const {},
+    Set<String> verifiedDAGBusinessOperations = const {},
     Set<String> verifiedManagementOperations = const {},
     Set<String> verifiedPendingPairingOperations = const {},
     Set<AccountResetAction> verifiedAccountResetActions = const {},
@@ -254,6 +274,9 @@ class NativeVaultGateway
          verifiedPINOperations ?? _pinEvidence,
        ),
        _verifiedDAGOperations = Set.unmodifiable(verifiedDAGOperations),
+       _verifiedDAGBusinessOperations = Set.unmodifiable(
+         verifiedDAGBusinessOperations,
+       ),
        _verifiedManagementOperations = Set.unmodifiable(
          verifiedManagementOperations,
        ),
@@ -302,6 +325,7 @@ class NativeVaultGateway
   final Set<String> _verifiedOperations;
   final Set<String> _verifiedPINOperations;
   final Set<String> _verifiedDAGOperations;
+  final Set<String> _verifiedDAGBusinessOperations;
   final Set<String> _verifiedManagementOperations;
   int _managementEpoch = 0;
   String? _managementPreparingOperation;
@@ -765,6 +789,7 @@ class NativeVaultGateway
   void retireRecoveryResults() {
     _recoveryEpoch++;
     _dagTrusted = null;
+    retireDAGBusinessResults();
   }
 
   @override
@@ -774,7 +799,7 @@ class NativeVaultGateway
     Uint8List completeCode,
   ) async {
     final epoch = _recoveryEpoch, scope = _scopeEpoch;
-    final previous = _dagTrusted;
+    final previous = _dagTrusted ?? _dagBusinessAnchor;
     try {
       _requireDAG(operation);
       await refreshLocalProtection();
@@ -825,6 +850,8 @@ class NativeVaultGateway
           );
         }
         _dagTrusted = result;
+        // 每次正式恢复先核原来源的持久pending，不能借只读视图推断新写资格。
+        _dagPendingKnown = false;
         _deviceId = result.deviceId;
         _checkpoint = result.snapshot.checkpoint;
       }
@@ -881,6 +908,236 @@ class NativeVaultGateway
       ),
     ],
   );
+
+  int _dagBusinessEpoch = 0;
+  bool _nativeDAGBusiness = false, _dagPendingKnown = false;
+  Set<String> _dagBusinessRuntimeOperations = const {};
+  List<PendingVaultOperation> _dagBusinessPending = const [];
+  Set<String> _dagVerifiedPendingIds = const {};
+  RecoveryTrusted? _dagBusinessAnchor;
+  @override
+  bool get dagBusinessSelected => _dagSelected;
+  @override
+  List<PendingVaultOperation> get dagBusinessPending => _dagBusinessPending;
+  bool _hasDAGBusiness(String operation) =>
+      experimentalOptIn &&
+      _systemStrong &&
+      _nativeDAGBusiness &&
+      _port is NativeDAGBusinessPort &&
+      !_cleanupPending &&
+      _endpoint.isNotEmpty &&
+      _localProtection?.mode != LocalProtectionMode.pin &&
+      _localProtection?.mode != LocalProtectionMode.blocked &&
+      _localProtection?.upgradeRequired != true &&
+      _dagBusinessRuntimeOperations.contains(operation) &&
+      _verifiedDAGBusinessOperations.contains(operation);
+  @override
+  void retireDAGBusinessResults() {
+    _dagBusinessEpoch++;
+    _dagPendingKnown = false;
+    _dagBusinessAnchor = null;
+    // RAM retirement不清Go原包。仅原生同来源查询可以替换这些公开原ID。
+  }
+
+  static const _dagPreExecutionErrors = {
+    'AUTH_CANCELLED',
+    'AUTH_FAILED',
+    'AUTH_UNAVAILABLE',
+    'PROTECTED_KEYS_UNAVAILABLE',
+    'BUSY',
+    'LOCKED',
+    'INVALID_COMMAND',
+  };
+  bool _sameDAGSource(RecoveryTrusted a, RecoveryTrusted b) =>
+      a.accountId == b.accountId &&
+      a.accountGeneration == b.accountGeneration &&
+      a.deviceId == b.deviceId &&
+      a.operationId == b.operationId &&
+      a.contentHash == b.contentHash &&
+      a.acceptedSequence == b.acceptedSequence &&
+      b.snapshot.checkpoint >= a.snapshot.checkpoint;
+  void _putDAGPending(PendingVaultOperation item) {
+    _dagBusinessPending = List.unmodifiable([
+      for (final p in _dagBusinessPending)
+        if (p.id != item.id) p,
+      item,
+    ]);
+  }
+
+  Future<DAGBusinessReply> _executeDAGBusiness(
+    String operation,
+    Map<String, String> fields,
+    Uint8List value,
+  ) async {
+    final epoch = _dagBusinessEpoch, scope = _scopeEpoch, endpoint = _endpoint;
+    final previous = _dagTrusted ?? _dagBusinessAnchor;
+    bool current() =>
+        epoch == _dagBusinessEpoch &&
+        scope == _scopeEpoch &&
+        endpoint == _endpoint &&
+        !_cleanupPending &&
+        _dagSelected;
+    final id = fields['requestId'];
+    var dispatched = false;
+    try {
+      if (!_dagSelected || !_hasDAGBusiness(operation)) {
+        throw const GatewayFailure('此DAG业务操作没有当前来源能力或逐项验收证据。');
+      }
+      validateDAGBusinessIntent(endpoint, operation, fields, value);
+      await refreshLocalProtection();
+      if (!current() || !_hasDAGBusiness(operation)) {
+        throw const GatewayFailure('本次DAG业务来源已退役，未调用业务入口。');
+      }
+      dispatched = true;
+      final reply = decodeDAGBusiness(
+        operation,
+        await _platform(
+          () => (_port as NativeDAGBusinessPort).executeDAGBusiness(
+            endpoint,
+            operation,
+            fields,
+            value,
+          ),
+          id: id,
+        ),
+        originalId: id,
+      );
+      if (!current()) {
+        throw const GatewayFailure('已丢弃原DAG业务范围的晚到结果。');
+      }
+      if (reply.source case final source?) {
+        if (previous == null || !_sameDAGSource(previous, source)) {
+          throw const GatewayFailure(
+            'DAG业务来源绑定、原登记或检查点改变，已关闭显示。',
+            suspendVault: true,
+          );
+        }
+        _dagTrusted = source;
+        _dagBusinessAnchor = source;
+        _checkpoint = source.snapshot.checkpoint;
+        _dagBusinessPending = List.unmodifiable([
+          for (final p in _dagBusinessPending)
+            if (p.id != id) p,
+        ]);
+        _dagVerifiedPendingIds = Set.unmodifiable(
+          _dagVerifiedPendingIds.where((item) => item != id),
+        );
+      } else if (reply.pending case final pending?) {
+        _dagBusinessPending = List.unmodifiable(
+          pending.map((p) => p.projection),
+        );
+        _dagVerifiedPendingIds = Set.unmodifiable(
+          pending.where((p) => !p.canceled).map((p) => p.requestId),
+        );
+        _dagPendingKnown = true;
+        _dagBusinessAnchor = previous;
+      } else if (reply.original case final original?) {
+        _putDAGPending(original.projection);
+        _dagVerifiedPendingIds = Set.unmodifiable({
+          ..._dagVerifiedPendingIds,
+          original.requestId,
+        });
+        _dagBusinessAnchor = previous;
+        _dagTrusted = null;
+      }
+      return reply;
+    } on NativeIntentFailure catch (e) {
+      if (!current()) throw const GatewayFailure('原DAG业务范围已结束。');
+      if (_dagPreExecutionErrors.contains(e.code)) {
+        if (operation != 'retryDAGWrite' && id != null) {
+          _dagBusinessPending = List.unmodifiable([
+            for (final p in _dagBusinessPending)
+              if (p.id != id) p,
+          ]);
+        }
+        rethrow;
+      }
+      _dagTrusted = null;
+      _dagPendingKnown = false;
+      if (e.trustInvalidated) {
+        _dagBusinessAnchor = null;
+        _dagBusinessPending = const [];
+        _dagVerifiedPendingIds = const {};
+        rethrow;
+      }
+      throw GatewayFailure('DAG业务结果未确认；请查询持久原ID，不能生成替代请求。', suspendVault: true);
+    } catch (e) {
+      if (dispatched && current()) {
+        // 已开始的业务调用/DTO未知必须关闭显示；不推断接受或授soft续办许可。
+        _dagTrusted = null;
+        _dagPendingKnown = false;
+        throw GatewayFailure(
+          'DAG业务返回未确认；视图已关闭，须先重新查询原状态。',
+          suspendVault: true,
+          invalidateSession: e is GatewayFailure && e.invalidateSession,
+        );
+      }
+      rethrow;
+    } finally {
+      value.fillRange(0, value.length, 0);
+    }
+  }
+
+  @override
+  Future<DAGBusinessReply> writeDAGVariable(
+    String environmentId,
+    String name,
+    Uint8List value, {
+    required bool delete,
+  }) async {
+    try {
+      final operation = delete ? 'deleteDAGVariable' : 'putDAGVariable';
+      if (_dagTrusted == null ||
+          !_dagPendingKnown ||
+          _dagBusinessPending.any((p) => p.canRetry) ||
+          !_hasDAGBusiness('pendingDAGWrites') ||
+          !_hasDAGBusiness('retryDAGWrite') ||
+          !_hasDAGBusiness(operation)) {
+        throw const GatewayFailure('须先核验本来源和原pending；未解决事务不允许新写。');
+      }
+      final rows = _dagTrusted!.snapshot.environments.where(
+        (e) => e.id == environmentId,
+      );
+      if (rows.length != 1 || rows.single.role == AccessRole.readOnly) {
+        throw const GatewayFailure('当前环境没有已验DAG写权限。');
+      }
+      final id = _newId();
+      final fields = {
+        'requestId': id,
+        'environmentId': environmentId,
+        'name': name,
+      };
+      validateDAGBusinessIntent(_endpoint, operation, fields, value);
+      _dagBusinessAnchor = _dagTrusted;
+      // 本次RAM意图标记不声称已seal/POST；失败后只同来源native查询可确证。
+      _putDAGPending(
+        PendingVaultOperation(
+          id: id,
+          operation: delete ? 'delete' : 'put',
+          environmentId: environmentId,
+          state: 'unknown',
+          sequence: 0,
+          applied: false,
+        ),
+      );
+      return await _executeDAGBusiness(operation, fields, value);
+    } finally {
+      value.fillRange(0, value.length, 0);
+    }
+  }
+
+  @override
+  Future<DAGBusinessReply> retryDAGBusinessWrite(String originalId) async {
+    if (!_dagPendingKnown ||
+        !_dagVerifiedPendingIds.contains(originalId) ||
+        (_dagTrusted ?? _dagBusinessAnchor) == null ||
+        !_dagBusinessPending.any((p) => p.id == originalId && p.canRetry)) {
+      throw const GatewayFailure('仅可续办本来源已核验列表中的原请求ID。');
+    }
+    return _executeDAGBusiness('retryDAGWrite', {
+      'requestId': originalId,
+    }, Uint8List(0));
+  }
 
   LocalProtectionStatus? _localProtection;
   bool _pinPreviouslyObserved = false;
@@ -1189,7 +1446,22 @@ class NativeVaultGateway
 
   @override
   Set<String> get capabilities => _dagSelected
-      ? const {}
+      ? Set.unmodifiable({
+          if (_hasDAGBusiness('pendingDAGWrites')) 'businessPendingInfo',
+          if (_hasDAGBusiness('retryDAGWrite')) 'retryBusinessOperation',
+          if (_hasDAGBusiness('pendingDAGWrites') &&
+              _hasDAGBusiness('retryDAGWrite') &&
+              recoveryCapabilities.contains('restoreDAGRecoveredDevice'))
+            'restoreSession',
+          if (_dagTrusted != null &&
+              _dagPendingKnown &&
+              _hasDAGBusiness('pendingDAGWrites') &&
+              _hasDAGBusiness('retryDAGWrite') &&
+              !_dagBusinessPending.any((p) => p.canRetry)) ...{
+            if (_hasDAGBusiness('putDAGVariable')) 'setVariable',
+            if (_hasDAGBusiness('deleteDAGVariable')) 'deleteVariable',
+          },
+        })
       : Set.unmodifiable({
           for (final op in managementOperations)
             if (_has(op)) op,
@@ -1316,6 +1588,8 @@ class NativeVaultGateway
     if (!experimentalOptIn) throw const GatewayFailure('未启用实验原生入口。');
     final epoch = _scopeEpoch;
     _dagRuntimeOperations = const {};
+    _dagBusinessRuntimeOperations = const {};
+    _nativeDAGBusiness = false;
     _nativeDAGOwnerCancellation = false;
     _compiledPendingPairingOperations = const {};
     _compiledAccountResetActions = const {};
@@ -1372,6 +1646,20 @@ class NativeVaultGateway
         throw const GatewayFailure('本机恢复取消能力配置无效，当前不可用。');
       }
       _nativeDAGOwnerCancellation = caps['nativeDAGOwnerCancellation'] == true;
+    }
+
+    if (caps.containsKey('nativeDAGBusiness') &&
+        caps['nativeDAGBusiness'] is! bool) {
+      throw const GatewayFailure('DAG业务编译能力无效，当前不可用。');
+    }
+    _nativeDAGBusiness = caps['nativeDAGBusiness'] == true;
+    if (_nativeDAGBusiness &&
+        _verifiedDAGBusinessOperations.isNotEmpty &&
+        _port is NativeDAGBusinessPort) {
+      final profile = await (_port as NativeDAGBusinessPort)
+          .dagBusinessProfile();
+      if (epoch != _scopeEpoch) return;
+      _dagBusinessRuntimeOperations = decodeDAGBusinessProfile(profile);
     }
 
     if (productFixture) {
@@ -1519,7 +1807,13 @@ class NativeVaultGateway
         const {},
         Uint8List(0),
       );
-      return (reply.payload as RecoveryTrusted).session;
+      final source = reply.payload as RecoveryTrusted;
+      if (!_hasDAGBusiness('pendingDAGWrites') ||
+          !_hasDAGBusiness('retryDAGWrite')) {
+        throw const GatewayFailure('本来源的原pending查询尚未逐项验收，不能恢复业务视图。');
+      }
+      final pending = await businessPendingInfo();
+      return VaultSession.withBusinessPending(source.session, pending);
     }
     _require('restoreSession');
     final projection = NativeTrustedProjection.parse(
@@ -1556,7 +1850,12 @@ class NativeVaultGateway
           const {},
           Uint8List(0),
         );
-        return _dagSnapshot(reply.payload as RecoveryTrusted);
+        final source = reply.payload as RecoveryTrusted;
+        if (_hasDAGBusiness('pendingDAGWrites') &&
+            _hasDAGBusiness('retryDAGWrite')) {
+          await businessPendingInfo();
+        }
+        return _dagSnapshot(source);
       } catch (_) {
         throw const GatewayFailure(
           '已恢复设备的正式拉取未完成，明文视图已关闭；请重新验证原来源。',
@@ -1594,6 +1893,9 @@ class NativeVaultGateway
 
   @override
   Future<void> submit(PreviewMutation mutation) async {
+    if (_dagSelected) {
+      throw const GatewayFailure('已恢复来源必须使用独立DAG业务入口，未调用普通writer。');
+    }
     if (_trusted == null || _pendingUnknown) {
       throw const GatewayFailure(
         '没有已验可信视图或原事务尚未确认；先查询原操作。',
@@ -1675,6 +1977,10 @@ class NativeVaultGateway
 
   @override
   Future<List<PendingVaultOperation>> businessPendingInfo() async {
+    if (_dagSelected) {
+      await _executeDAGBusiness('pendingDAGWrites', const {}, Uint8List(0));
+      return _dagBusinessPending;
+    }
     final data = NativePendingOperation.parseList(
       nativeData(await _execute('businessPendingInfo', {})),
     );
@@ -1684,6 +1990,9 @@ class NativeVaultGateway
 
   @override
   Future<PendingVaultOperation> retryBusinessOperation(String id) async {
+    if (_dagSelected) {
+      throw const GatewayFailure('已恢复来源的原请求须走专用DAG重试入口。');
+    }
     if (!nativeIdentifier(id) || id.length > 64) {
       throw const GatewayFailure('原ID格式无效，未发送新意图。');
     }
@@ -1947,6 +2256,8 @@ class NativeVaultGateway
     _pendingUnknown = false;
     _cleanupPending = false;
     _dagSelected = false;
+    _dagBusinessPending = const [];
+    _dagVerifiedPendingIds = const {};
     _managementOperation = const ManagementOperation(
       phase: ManagementPhase.idle,
     );

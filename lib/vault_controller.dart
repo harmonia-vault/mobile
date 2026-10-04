@@ -13,6 +13,7 @@ import 'management/management_gateway.dart';
 import 'pairing/pending_pairing_gateway.dart';
 import 'pairing/pending_pairing_presentation.dart';
 import 'recovery/recovery_gateway.dart';
+import 'dag_business/dag_business_gateway.dart';
 import 'recovery/recovery_coordinator.dart';
 
 import 'package:flutter/foundation.dart';
@@ -1320,6 +1321,22 @@ class VaultController extends ChangeNotifier
       }
       await _run((epoch) async {
         await body();
+        if ({
+              RecoveryAction.verifyDevice,
+              RecoveryAction.restoreDevice,
+              RecoveryAction.pullDevice,
+            }.contains(action) &&
+            epoch == _epoch &&
+            _dagBusinessSelected &&
+            _session.stage == SessionStage.trusted &&
+            supports('businessPendingInfo') &&
+            gateway is BusinessPendingGateway) {
+          final pending = await (gateway as BusinessPendingGateway)
+              .businessPendingInfo();
+          if (!await _awaitDAGBusinessForeground(epoch)) return;
+          _businessPending = List.unmodifiable(pending);
+          if (_businessPending.any((p) => p.canRetry)) _suspendVault();
+        }
         if (epoch == _epoch &&
             !_disposed &&
             !recovery.trustedDevice &&
@@ -1938,6 +1955,13 @@ class VaultController extends ChangeNotifier
     if (_disposed || epoch != _epoch) return;
     await _awaitVaultForeground(epoch);
     if (_disposed || epoch != _epoch || !canEnterVault) return;
+    if (_dagBusinessSelected) {
+      _syncDAGBusinessPending();
+      if (_businessPending.any((p) => p.canRetry)) {
+        _suspendVault();
+        return;
+      }
+    }
     if (pulled.checkpoint < _snapshot.checkpoint) {
       throw const GatewayFailure('返回的检查点倒退，已拒绝更新。');
     }
@@ -2126,6 +2150,89 @@ class VaultController extends ChangeNotifier
     _locations.add(const VaultLocation(VaultPage.initialization));
   });
 
+  bool get _dagBusinessSelected =>
+      gateway is DAGBusinessGateway &&
+      (gateway as DAGBusinessGateway).dagBusinessSelected;
+  void _syncDAGBusinessPending() {
+    _businessPending = List.unmodifiable(
+      (gateway as DAGBusinessGateway).dagBusinessPending,
+    );
+  }
+
+  // 只等待本次真正前台事件；元数据/正式source尚未应用，不提前清遮罩或授信任。
+  Future<bool> _awaitDAGBusinessForeground(int epoch) async {
+    final token = _activeOperation;
+    final watch = Stopwatch()..start();
+    while (_privacyMask &&
+        !_disposed &&
+        epoch == _epoch &&
+        token != null &&
+        token == _activeOperation &&
+        _foreground &&
+        !_privacyLocked &&
+        !_nativeCleanupPending &&
+        watch.elapsed < const Duration(seconds: 5)) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    if (_disposed ||
+        epoch != _epoch ||
+        token != _activeOperation ||
+        !_foreground ||
+        _privacyMask ||
+        _privacyLocked ||
+        _nativeCleanupPending) {
+      if (!_disposed && epoch == _epoch) _suspendVault();
+      return false;
+    }
+    return true;
+  }
+
+  Future<void> _applyDAGBusinessReply(DAGBusinessReply reply, int epoch) async {
+    if (_disposed || epoch != _epoch) return;
+    _syncDAGBusinessPending();
+    if (!reply.applied) {
+      throw const GatewayFailure(
+        '原DAG写入结果未完成；请查询并续办同一请求ID。',
+        suspendVault: true,
+      );
+    }
+    final source = reply.source!;
+    if (source.accountId != _session.accountId ||
+        source.accountGeneration != _session.accountGeneration) {
+      throw const GatewayFailure('DAG业务账号代际改变，已拒绝旧视图。', suspendVault: true);
+    }
+    if (!await _awaitDAGBusinessForeground(epoch)) return;
+    final pending = List<PendingVaultOperation>.of(_businessPending);
+    _applySession(VaultSession.withBusinessPending(source.session, pending));
+    if (_hasBusinessContinuation) {
+      _suspendVault();
+      return;
+    }
+    final next = VaultSnapshot(
+      checkpoint: source.snapshot.checkpoint,
+      environments: source.snapshot.environments,
+      devices: [
+        VaultDevice(
+          id: source.deviceId,
+          name: '本机',
+          platform: 'Android',
+          current: true,
+          accessSummary: source.snapshot.environments
+              .map((e) => '${e.name}：${e.role.label}')
+              .join('；'),
+          expiresLabel: '按原生已验授权生效',
+        ),
+      ],
+    );
+    if (_accessReduced(_snapshot, next)) _retireSensitiveForm();
+    _snapshot = next;
+    _phase = ConnectionPhase.online;
+    _locations.removeWhere((r) => !_allowed(r));
+    if (_locations.isEmpty) {
+      _locations.add(const VaultLocation(VaultPage.environments));
+    }
+  }
+
   Future<void> queryBusinessPending() => _run((epoch) async {
     if (!supports('businessPendingInfo') ||
         gateway is! BusinessPendingGateway) {
@@ -2135,6 +2242,11 @@ class VaultController extends ChangeNotifier
         .businessPendingInfo();
     if (epoch != _epoch) return;
     _businessPending = List.unmodifiable(pending);
+    if (_dagBusinessSelected) {
+      if (_businessPending.any((p) => p.canRetry)) _suspendVault();
+      // metadata本身不恢复明文或授trust；需已有正式来源或明确重验来源。
+      return;
+    }
     if (_vaultSuspended &&
         !pending.any((item) => item.canRetry) &&
         supports('restoreSession')) {
@@ -2150,6 +2262,16 @@ class VaultController extends ChangeNotifier
         gateway is! BusinessPendingGateway ||
         !_businessPending.any((item) => item.id == id && item.canRetry)) {
       throw const GatewayFailure('仅可续办已核验列表中的原操作 ID。');
+    }
+    if (_dagBusinessSelected) {
+      try {
+        final reply = await (gateway as DAGBusinessGateway)
+            .retryDAGBusinessWrite(id);
+        await _applyDAGBusinessReply(reply, epoch);
+      } finally {
+        if (!_disposed && epoch == _epoch) _syncDAGBusinessPending();
+      }
+      return;
     }
     final resolved = await (gateway as BusinessPendingGateway)
         .retryBusinessOperation(id);
@@ -2199,6 +2321,28 @@ class VaultController extends ChangeNotifier
         !supports(mutation.operation.name) ||
         !previewMode && _phase != ConnectionPhase.online) {
       throw const GatewayFailure('当前设备或连接状态不允许共享修改。离线仅可读已验配置。');
+    }
+    if (_dagBusinessSelected) {
+      if (!{
+        PreviewOperation.setVariable,
+        PreviewOperation.deleteVariable,
+      }.contains(mutation.operation)) {
+        throw const GatewayFailure('本来源环境与授权管理尚未接通，没有退回普通writer。');
+      }
+      final value = Uint8List.fromList(utf8.encode(mutation.value ?? ''));
+      try {
+        final reply = await (gateway as DAGBusinessGateway).writeDAGVariable(
+          mutation.environmentId!,
+          mutation.name!,
+          value,
+          delete: mutation.operation == PreviewOperation.deleteVariable,
+        );
+        await _applyDAGBusinessReply(reply, epoch);
+      } finally {
+        value.fillRange(0, value.length, 0);
+        if (!_disposed && epoch == _epoch) _syncDAGBusinessPending();
+      }
+      return;
     }
     await gateway.submit(mutation);
     await _pull(epoch);
@@ -2499,6 +2643,9 @@ class VaultController extends ChangeNotifier
       if (_recoveryFlow.active) {
         _recoveryFlow.invalidate();
         _suspendVault();
+      }
+      if (gateway is DAGBusinessGateway) {
+        (gateway as DAGBusinessGateway).retireDAGBusinessResults();
       }
       // native lifecycle 独立退役 registry；Dart 立即丢弃晚到返回和新码。
     }

@@ -370,7 +370,7 @@ RecoveryChoices _choices(Object? raw) {
   );
 }
 
-RecoveryTrusted _trusted(Object? raw) {
+RecoveryTrusted decodeDAGTrustedSource(Object? raw) {
   final m = _object(raw, {
     'version',
     'profile',
@@ -489,7 +489,7 @@ RecoveryReply decodeDAGRecovery(String operation, Map<String, Object?> raw) {
     'closeDAGRecoveryOriginal' => _resolution(raw['data']),
     'applyDAGRecoveredDevice' ||
     'restoreDAGRecoveredDevice' ||
-    'pullDAGRecoveredDevice' => _trusted(raw['data']),
+    'pullDAGRecoveredDevice' => decodeDAGTrustedSource(raw['data']),
     _ => _invalid(),
   };
   return RecoveryReply(payload);
