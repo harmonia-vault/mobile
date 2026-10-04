@@ -22,6 +22,8 @@ import 'native_management_contract.dart';
 import '../recovery/recovery_gateway.dart';
 import 'native_dag_recovery_adapter.dart';
 import 'native_dag_business_adapter.dart';
+import 'native_dag_environment_adapter.dart';
+import '../dag_business/dag_environment_gateway.dart';
 import '../dag_business/dag_business_gateway.dart';
 import 'native_business_adapter.dart';
 import 'native_fixture_connection.dart';
@@ -65,8 +67,25 @@ class MethodChannelGatewayPort
         NativeDAGRecoveryPort,
         NativeDAGProfilePort,
         NativePendingPairingsPort,
-        NativeDAGBusinessPort {
+        NativeDAGBusinessPort,
+        NativeDAGEnvironmentPort {
   const MethodChannelGatewayPort();
+  @override
+  Future<Map<String, Object?>> dagEnvironmentProfile() =>
+      const NativeDAGEnvironmentAdapter().dagEnvironmentProfile();
+  @override
+  Future<Map<String, Object?>> executeDAGEnvironment(
+    String endpoint,
+    String operation,
+    Map<String, String> fields,
+    Uint8List name,
+  ) => const NativeDAGEnvironmentAdapter().executeDAGEnvironment(
+    endpoint,
+    operation,
+    fields,
+    name,
+  );
+
   @override
   Future<Map<String, Object?>> dagBusinessProfile() =>
       const NativeDAGBusinessAdapter().dagBusinessProfile();
@@ -252,7 +271,8 @@ class NativeVaultGateway
         DeviceManagementGateway,
         PendingPairingGateway,
         AccountResetGatewayProvider,
-        DAGBusinessGateway {
+        DAGBusinessGateway,
+        DAGEnvironmentGateway {
   NativeVaultGateway({
     required this.experimentalOptIn,
     this.productFixture = false,
@@ -261,6 +281,7 @@ class NativeVaultGateway
     Set<String>? verifiedPINOperations,
     Set<String> verifiedDAGOperations = const {},
     Set<String> verifiedDAGBusinessOperations = const {},
+    Set<String> verifiedDAGEnvironmentOperations = const {},
     Set<String> verifiedManagementOperations = const {},
     Set<String> verifiedPendingPairingOperations = const {},
     Set<AccountResetAction> verifiedAccountResetActions = const {},
@@ -276,6 +297,9 @@ class NativeVaultGateway
        _verifiedDAGOperations = Set.unmodifiable(verifiedDAGOperations),
        _verifiedDAGBusinessOperations = Set.unmodifiable(
          verifiedDAGBusinessOperations,
+       ),
+       _verifiedDAGEnvironmentOperations = Set.unmodifiable(
+         verifiedDAGEnvironmentOperations,
        ),
        _verifiedManagementOperations = Set.unmodifiable(
          verifiedManagementOperations,
@@ -326,6 +350,7 @@ class NativeVaultGateway
   final Set<String> _verifiedPINOperations;
   final Set<String> _verifiedDAGOperations;
   final Set<String> _verifiedDAGBusinessOperations;
+  final Set<String> _verifiedDAGEnvironmentOperations;
   final Set<String> _verifiedManagementOperations;
   int _managementEpoch = 0;
   String? _managementPreparingOperation;
@@ -852,6 +877,7 @@ class NativeVaultGateway
         _dagTrusted = result;
         // 每次正式恢复先核原来源的持久pending，不能借只读视图推断新写资格。
         _dagPendingKnown = false;
+        _dagEnvironmentPendingKnown = false;
         _deviceId = result.deviceId;
         _checkpoint = result.snapshot.checkpoint;
       }
@@ -918,7 +944,8 @@ class NativeVaultGateway
   @override
   bool get dagBusinessSelected => _dagSelected;
   @override
-  List<PendingVaultOperation> get dagBusinessPending => _dagBusinessPending;
+  List<PendingVaultOperation> get dagBusinessPending =>
+      List.unmodifiable([..._dagBusinessPending, ..._dagEnvironmentPending]);
   bool _hasDAGBusiness(String operation) =>
       experimentalOptIn &&
       _systemStrong &&
@@ -935,6 +962,7 @@ class NativeVaultGateway
   void retireDAGBusinessResults() {
     _dagBusinessEpoch++;
     _dagPendingKnown = false;
+    _dagEnvironmentPendingKnown = false;
     _dagBusinessAnchor = null;
     // RAM retirement不清Go原包。仅原生同来源查询可以替换这些公开原ID。
   }
@@ -1078,6 +1106,242 @@ class NativeVaultGateway
     }
   }
 
+  bool _nativeDAGEnvironment = false, _dagEnvironmentPendingKnown = false;
+  Set<String> _dagEnvironmentRuntimeOperations = const {};
+  List<PendingVaultOperation> _dagEnvironmentPending = const [];
+  Set<String> _dagEnvironmentVerifiedPendingIds = const {};
+  @override
+  List<PendingVaultOperation> get dagEnvironmentPending =>
+      _dagEnvironmentPending;
+  bool _hasDAGEnvironment(String operation) =>
+      experimentalOptIn &&
+      _systemStrong &&
+      _nativeDAGEnvironment &&
+      _port is NativeDAGEnvironmentPort &&
+      !_cleanupPending &&
+      _endpoint.isNotEmpty &&
+      _localProtection?.mode != LocalProtectionMode.pin &&
+      _localProtection?.mode != LocalProtectionMode.blocked &&
+      _localProtection?.upgradeRequired != true &&
+      _dagEnvironmentRuntimeOperations.contains(operation) &&
+      _verifiedDAGEnvironmentOperations.contains(operation);
+  bool get _dagEnvironmentPendingRequired =>
+      _verifiedDAGEnvironmentOperations.isNotEmpty;
+  bool get _dagAllPendingKnown =>
+      _dagPendingKnown &&
+      (!_dagEnvironmentPendingRequired || _dagEnvironmentPendingKnown);
+  void _putDAGEnvironmentPending(PendingVaultOperation item) {
+    _dagEnvironmentPending = List.unmodifiable([
+      for (final p in _dagEnvironmentPending)
+        if (p.id != item.id) p,
+      item,
+    ]);
+  }
+
+  Future<DAGEnvironmentReply> _executeDAGEnvironment(
+    String operation,
+    Map<String, String> fields,
+    Uint8List value,
+  ) async {
+    final epoch = _dagBusinessEpoch, scope = _scopeEpoch, endpoint = _endpoint;
+    final previous = _dagTrusted ?? _dagBusinessAnchor;
+    bool current() =>
+        epoch == _dagBusinessEpoch &&
+        scope == _scopeEpoch &&
+        endpoint == _endpoint &&
+        !_cleanupPending &&
+        _dagSelected;
+    final id = fields['requestId'];
+    var dispatched = false;
+    try {
+      if (!_dagSelected || !_hasDAGEnvironment(operation)) {
+        throw const GatewayFailure('此DAG环境操作没有当前来源能力或逐项验收证据。');
+      }
+      validateDAGEnvironmentIntent(endpoint, operation, fields, value);
+      await refreshLocalProtection();
+      if (!current() || !_hasDAGEnvironment(operation)) {
+        throw const GatewayFailure('本次DAG环境来源已退役，未调用业务入口。');
+      }
+      dispatched = true;
+      final reply = decodeDAGEnvironment(
+        operation,
+        await _platform(
+          () => (_port as NativeDAGEnvironmentPort).executeDAGEnvironment(
+            endpoint,
+            operation,
+            fields,
+            value,
+          ),
+          id: id,
+        ),
+        originalId: id,
+        environmentId:
+            fields['environmentId'] ??
+            (operation == 'retryDAGEnvironment'
+                ? _dagEnvironmentPending
+                      .firstWhere((p) => p.id == id)
+                      .environmentId
+                : null),
+      );
+      if (!current()) {
+        throw const GatewayFailure('已丢弃原DAG环境范围的晚到结果。');
+      }
+      final info = reply.environment ?? reply.original;
+      if (operation == 'retryDAGEnvironment' &&
+          info != null &&
+          !_dagEnvironmentPending.any(
+            (p) => p.id == id && p.operation == 'environment-${info.operation}',
+          )) {
+        throw const GatewayFailure('原环境操作类型改变，已拒绝。', suspendVault: true);
+      }
+      if (reply.source case final source?) {
+        if (previous == null || !_sameDAGSource(previous, source)) {
+          throw const GatewayFailure(
+            'DAG环境来源绑定、原登记或检查点改变，已关闭显示。',
+            suspendVault: true,
+          );
+        }
+        _dagTrusted = source;
+        _dagBusinessAnchor = source;
+        _checkpoint = source.snapshot.checkpoint;
+        _dagEnvironmentPending = List.unmodifiable([
+          for (final p in _dagEnvironmentPending)
+            if (p.id != id) p,
+        ]);
+        _dagEnvironmentVerifiedPendingIds = Set.unmodifiable(
+          _dagEnvironmentVerifiedPendingIds.where((item) => item != id),
+        );
+      } else if (reply.pending case final pending?) {
+        _dagEnvironmentPending = List.unmodifiable(
+          pending.map((p) => p.projection),
+        );
+        _dagEnvironmentVerifiedPendingIds = Set.unmodifiable(
+          pending.where((p) => !p.applied).map((p) => p.requestId),
+        );
+        if (_dagEnvironmentPending.any(
+          (e) => _dagBusinessPending.any((v) => v.id == e.id),
+        )) {
+          throw const GatewayFailure('变量和环境原请求ID冲突，已关闭显示。', suspendVault: true);
+        }
+        _dagEnvironmentPendingKnown = true;
+        _dagBusinessAnchor = previous;
+      } else if (reply.original case final original?) {
+        _putDAGEnvironmentPending(original.projection);
+        _dagEnvironmentVerifiedPendingIds = Set.unmodifiable({
+          ..._dagEnvironmentVerifiedPendingIds,
+          original.requestId,
+        });
+        _dagBusinessAnchor = previous;
+        _dagTrusted = null;
+      }
+      return reply;
+    } on NativeIntentFailure catch (e) {
+      if (!current()) throw const GatewayFailure('原DAG环境范围已结束。');
+      if (_dagPreExecutionErrors.contains(e.code)) {
+        if (operation != 'retryDAGEnvironment' && id != null) {
+          _dagEnvironmentPending = List.unmodifiable([
+            for (final p in _dagEnvironmentPending)
+              if (p.id != id) p,
+          ]);
+        }
+        rethrow;
+      }
+      _dagTrusted = null;
+      _dagEnvironmentPendingKnown = false;
+      if (e.trustInvalidated) {
+        _dagBusinessAnchor = null;
+        _dagEnvironmentPending = const [];
+        _dagEnvironmentVerifiedPendingIds = const {};
+        _dagBusinessPending = const [];
+        _dagVerifiedPendingIds = const {};
+        _dagPendingKnown = false;
+        rethrow;
+      }
+      throw GatewayFailure('DAG环境结果未确认；请查询持久原ID，不能生成替代请求。', suspendVault: true);
+    } catch (e) {
+      if (dispatched && current()) {
+        // 已开始的业务调用/DTO未知必须关闭显示；不推断接受或授soft续办许可。
+        _dagTrusted = null;
+        _dagEnvironmentPendingKnown = false;
+        throw GatewayFailure(
+          'DAG环境返回未确认；视图已关闭，须先重新查询原状态。',
+          suspendVault: true,
+          invalidateSession: e is GatewayFailure && e.invalidateSession,
+        );
+      }
+      rethrow;
+    } finally {
+      value.fillRange(0, value.length, 0);
+    }
+  }
+
+  @override
+  Future<DAGEnvironmentReply> changeDAGEnvironment(
+    String operation,
+    String environmentId,
+    Uint8List name,
+  ) async {
+    try {
+      if (!{
+            'createDAGEnvironment',
+            'renameDAGEnvironment',
+            'rotateDAGEnvironment',
+            'deleteDAGEnvironment',
+          }.contains(operation) ||
+          _dagTrusted == null ||
+          !_dagAllPendingKnown ||
+          dagBusinessPending.any((p) => p.canRetry) ||
+          !_hasDAGEnvironment('pendingDAGEnvironments') ||
+          !_hasDAGEnvironment('retryDAGEnvironment') ||
+          !_hasDAGEnvironment(operation)) {
+        throw const GatewayFailure('须先核验环境来源与全部原请求；未解决事务不能发起新环境修改。');
+      }
+      final rows = _dagTrusted!.snapshot.environments.where(
+        (e) => e.id == environmentId,
+      );
+      if (rows.length != 1 || rows.single.role != AccessRole.admin) {
+        throw const GatewayFailure('须明确选择当前已验Admin环境，不能自动借用其它环境权限。');
+      }
+      final id = _newId();
+      final fields = {'requestId': id};
+      fields[operation == 'createDAGEnvironment'
+              ? 'authorityEnvironmentId'
+              : 'environmentId'] =
+          environmentId;
+      validateDAGEnvironmentIntent(_endpoint, operation, fields, name);
+      _dagBusinessAnchor = _dagTrusted;
+      _putDAGEnvironmentPending(
+        PendingVaultOperation(
+          id: id,
+          operation:
+              'environment-${operation.replaceFirst('DAGEnvironment', '')}',
+          environmentId: operation == 'createDAGEnvironment'
+              ? ''
+              : environmentId,
+          state: 'unknown',
+          sequence: 0,
+          applied: false,
+        ),
+      );
+      return await _executeDAGEnvironment(operation, fields, name);
+    } finally {
+      name.fillRange(0, name.length, 0);
+    }
+  }
+
+  @override
+  Future<DAGEnvironmentReply> retryDAGEnvironment(String originalId) async {
+    if (!_dagEnvironmentPendingKnown ||
+        !_dagEnvironmentVerifiedPendingIds.contains(originalId) ||
+        (_dagTrusted ?? _dagBusinessAnchor) == null ||
+        !_dagEnvironmentPending.any((p) => p.id == originalId && p.canRetry)) {
+      throw const GatewayFailure('仅可续办本来源查询确认的原环境请求ID。');
+    }
+    return _executeDAGEnvironment('retryDAGEnvironment', {
+      'requestId': originalId,
+    }, Uint8List(0));
+  }
+
   @override
   Future<DAGBusinessReply> writeDAGVariable(
     String environmentId,
@@ -1088,8 +1352,8 @@ class NativeVaultGateway
     try {
       final operation = delete ? 'deleteDAGVariable' : 'putDAGVariable';
       if (_dagTrusted == null ||
-          !_dagPendingKnown ||
-          _dagBusinessPending.any((p) => p.canRetry) ||
+          !_dagAllPendingKnown ||
+          dagBusinessPending.any((p) => p.canRetry) ||
           !_hasDAGBusiness('pendingDAGWrites') ||
           !_hasDAGBusiness('retryDAGWrite') ||
           !_hasDAGBusiness(operation)) {
@@ -1454,12 +1718,24 @@ class NativeVaultGateway
               recoveryCapabilities.contains('restoreDAGRecoveredDevice'))
             'restoreSession',
           if (_dagTrusted != null &&
-              _dagPendingKnown &&
+              _dagAllPendingKnown &&
               _hasDAGBusiness('pendingDAGWrites') &&
               _hasDAGBusiness('retryDAGWrite') &&
-              !_dagBusinessPending.any((p) => p.canRetry)) ...{
+              !dagBusinessPending.any((p) => p.canRetry)) ...{
             if (_hasDAGBusiness('putDAGVariable')) 'setVariable',
             if (_hasDAGBusiness('deleteDAGVariable')) 'deleteVariable',
+            if (_dagEnvironmentPendingKnown &&
+                _hasDAGEnvironment('pendingDAGEnvironments') &&
+                _hasDAGEnvironment('retryDAGEnvironment')) ...{
+              if (_hasDAGEnvironment('createDAGEnvironment'))
+                'createEnvironment',
+              if (_hasDAGEnvironment('renameDAGEnvironment'))
+                'renameEnvironment',
+              if (_hasDAGEnvironment('rotateDAGEnvironment'))
+                'rotateEnvironmentKey',
+              if (_hasDAGEnvironment('deleteDAGEnvironment'))
+                'deleteEnvironment',
+            },
           },
         })
       : Set.unmodifiable({
@@ -1590,6 +1866,8 @@ class NativeVaultGateway
     _dagRuntimeOperations = const {};
     _dagBusinessRuntimeOperations = const {};
     _nativeDAGBusiness = false;
+    _nativeDAGEnvironment = false;
+    _dagEnvironmentRuntimeOperations = const {};
     _nativeDAGOwnerCancellation = false;
     _compiledPendingPairingOperations = const {};
     _compiledAccountResetActions = const {};
@@ -1660,6 +1938,20 @@ class NativeVaultGateway
           .dagBusinessProfile();
       if (epoch != _scopeEpoch) return;
       _dagBusinessRuntimeOperations = decodeDAGBusinessProfile(profile);
+    }
+
+    if (caps.containsKey('nativeDAGEnvironment') &&
+        caps['nativeDAGEnvironment'] is! bool) {
+      throw const GatewayFailure('DAG环境编译能力无效，当前不可用。');
+    }
+    _nativeDAGEnvironment = caps['nativeDAGEnvironment'] == true;
+    if (_nativeDAGEnvironment &&
+        _verifiedDAGEnvironmentOperations.isNotEmpty &&
+        _port is NativeDAGEnvironmentPort) {
+      final profile = await (_port as NativeDAGEnvironmentPort)
+          .dagEnvironmentProfile();
+      if (epoch != _scopeEpoch) return;
+      _dagEnvironmentRuntimeOperations = decodeDAGEnvironmentProfile(profile);
     }
 
     if (productFixture) {
@@ -1979,7 +2271,22 @@ class NativeVaultGateway
   Future<List<PendingVaultOperation>> businessPendingInfo() async {
     if (_dagSelected) {
       await _executeDAGBusiness('pendingDAGWrites', const {}, Uint8List(0));
-      return _dagBusinessPending;
+      if (_dagEnvironmentPendingRequired) {
+        if (!_hasDAGEnvironment('pendingDAGEnvironments') ||
+            !_hasDAGEnvironment('retryDAGEnvironment')) {
+          _dagTrusted = null;
+          throw const GatewayFailure(
+            '环境原请求查询尚未验收，不能恢复业务视图。',
+            suspendVault: true,
+          );
+        }
+        await _executeDAGEnvironment(
+          'pendingDAGEnvironments',
+          const {},
+          Uint8List(0),
+        );
+      }
+      return dagBusinessPending;
     }
     final data = NativePendingOperation.parseList(
       nativeData(await _execute('businessPendingInfo', {})),
@@ -2258,6 +2565,9 @@ class NativeVaultGateway
     _dagSelected = false;
     _dagBusinessPending = const [];
     _dagVerifiedPendingIds = const {};
+    _dagEnvironmentPending = const [];
+    _dagEnvironmentVerifiedPendingIds = const {};
+    _dagEnvironmentPendingKnown = false;
     _managementOperation = const ManagementOperation(
       phase: ManagementPhase.idle,
     );

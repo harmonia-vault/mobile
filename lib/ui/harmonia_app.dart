@@ -13,6 +13,7 @@ import 'pending_pairing_ui.dart';
 import 'account_reset_ui.dart';
 import '../security/sensitive_input_guard.dart';
 import 'design_system.dart';
+import 'dag_environment_authority_ui.dart';
 import 'local_pin_ui.dart';
 import 'recovery_ui.dart';
 
@@ -1548,6 +1549,8 @@ class _EnvListState extends State<_EnvList> {
           title: '新建环境',
           form: true,
           children: [
+            if (c.usesDAGEnvironmentAuthority)
+              DAGEnvironmentAuthoritySelector(controller: c),
             TextField(
               controller: _name,
               decoration: InputDecoration(

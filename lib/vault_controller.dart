@@ -14,6 +14,7 @@ import 'pairing/pending_pairing_gateway.dart';
 import 'pairing/pending_pairing_presentation.dart';
 import 'recovery/recovery_gateway.dart';
 import 'dag_business/dag_business_gateway.dart';
+import 'dag_business/dag_environment_gateway.dart';
 import 'recovery/recovery_coordinator.dart';
 
 import 'package:flutter/foundation.dart';
@@ -1207,6 +1208,7 @@ class VaultController extends ChangeNotifier
       !_disposed &&
       !_nativeCleanupPending;
   void _retireSensitiveForm() {
+    _dagEnvironmentAuthorityId = null;
     _formRetentionTimer?.cancel();
     _formRetentionTimer = null;
     _retainedForm = false;
@@ -2153,6 +2155,33 @@ class VaultController extends ChangeNotifier
   bool get _dagBusinessSelected =>
       gateway is DAGBusinessGateway &&
       (gateway as DAGBusinessGateway).dagBusinessSelected;
+  String? _dagEnvironmentAuthorityId;
+  bool get usesDAGEnvironmentAuthority =>
+      _dagBusinessSelected && gateway is DAGEnvironmentGateway;
+  List<VaultEnvironment> get dagEnvironmentAuthorityChoices =>
+      List.unmodifiable(
+        usesDAGEnvironmentAuthority
+            ? environments.where((e) => e.role == AccessRole.admin)
+            : <VaultEnvironment>[],
+      );
+  String? get dagEnvironmentAuthorityId =>
+      dagEnvironmentAuthorityChoices.any(
+        (e) => e.id == _dagEnvironmentAuthorityId,
+      )
+      ? _dagEnvironmentAuthorityId
+      : null;
+  void selectDAGEnvironmentAuthority(String? id) {
+    if (_disposed || _busy || !canEnterVault) return;
+    if (id != null && !dagEnvironmentAuthorityChoices.any((e) => e.id == id)) {
+      _dagEnvironmentAuthorityId = null;
+      _error = '须明确选择当前已验Admin环境。';
+    } else {
+      _dagEnvironmentAuthorityId = id;
+      _error = null;
+    }
+    _notify();
+  }
+
   void _syncDAGBusinessPending() {
     _businessPending = List.unmodifiable(
       (gateway as DAGBusinessGateway).dagBusinessPending,
@@ -2196,7 +2225,25 @@ class VaultController extends ChangeNotifier
         suspendVault: true,
       );
     }
-    final source = reply.source!;
+    await _applyDAGBusinessSource(reply.source!, epoch);
+  }
+
+  Future<void> _applyDAGEnvironmentReply(
+    DAGEnvironmentReply reply,
+    int epoch,
+  ) async {
+    if (_disposed || epoch != _epoch) return;
+    _syncDAGBusinessPending();
+    if (!reply.applied) {
+      throw const GatewayFailure('原环境操作尚未完成；须沿同一请求ID查询续办。', suspendVault: true);
+    }
+    await _applyDAGBusinessSource(reply.source!, epoch);
+  }
+
+  Future<void> _applyDAGBusinessSource(
+    RecoveryTrusted source,
+    int epoch,
+  ) async {
     if (source.accountId != _session.accountId ||
         source.accountGeneration != _session.accountGeneration) {
       throw const GatewayFailure('DAG业务账号代际改变，已拒绝旧视图。', suspendVault: true);
@@ -2265,9 +2312,18 @@ class VaultController extends ChangeNotifier
     }
     if (_dagBusinessSelected) {
       try {
-        final reply = await (gateway as DAGBusinessGateway)
-            .retryDAGBusinessWrite(id);
-        await _applyDAGBusinessReply(reply, epoch);
+        if (gateway is DAGEnvironmentGateway &&
+            (gateway as DAGEnvironmentGateway).dagEnvironmentPending.any(
+              (p) => p.id == id && p.canRetry,
+            )) {
+          final reply = await (gateway as DAGEnvironmentGateway)
+              .retryDAGEnvironment(id);
+          await _applyDAGEnvironmentReply(reply, epoch);
+        } else {
+          final reply = await (gateway as DAGBusinessGateway)
+              .retryDAGBusinessWrite(id);
+          await _applyDAGBusinessReply(reply, epoch);
+        }
       } finally {
         if (!_disposed && epoch == _epoch) _syncDAGBusinessPending();
       }
@@ -2323,6 +2379,35 @@ class VaultController extends ChangeNotifier
       throw const GatewayFailure('当前设备或连接状态不允许共享修改。离线仅可读已验配置。');
     }
     if (_dagBusinessSelected) {
+      final environmentOperation = {
+        PreviewOperation.createEnvironment: 'createDAGEnvironment',
+        PreviewOperation.renameEnvironment: 'renameDAGEnvironment',
+        PreviewOperation.deleteEnvironment: 'deleteDAGEnvironment',
+      }[mutation.operation];
+      if (environmentOperation != null) {
+        if (gateway is! DAGEnvironmentGateway) {
+          throw const GatewayFailure('本来源的环境管理尚未接通。');
+        }
+        final target = mutation.operation == PreviewOperation.createEnvironment
+            ? dagEnvironmentAuthorityId
+            : mutation.environmentId;
+        if (target == null ||
+            !environments.any(
+              (e) => e.id == target && e.role == AccessRole.admin,
+            )) {
+          throw const GatewayFailure('请先明确选择一个当前Admin环境作为本次创建权限来源。');
+        }
+        final name = Uint8List.fromList(utf8.encode(mutation.name ?? ''));
+        try {
+          final reply = await (gateway as DAGEnvironmentGateway)
+              .changeDAGEnvironment(environmentOperation, target, name);
+          await _applyDAGEnvironmentReply(reply, epoch);
+        } finally {
+          name.fillRange(0, name.length, 0);
+          if (!_disposed && epoch == _epoch) _syncDAGBusinessPending();
+        }
+        return;
+      }
       if (!{
         PreviewOperation.setVariable,
         PreviewOperation.deleteVariable,
@@ -2370,6 +2455,24 @@ class VaultController extends ChangeNotifier
   Future<void> deleteEnvironment(String id) => _mutate(
     PreviewMutation(PreviewOperation.deleteEnvironment, environmentId: id),
   );
+  Future<void> rotateEnvironmentKey(String id) => _run((epoch) async {
+    if (!canEnterVault ||
+        _phase != ConnectionPhase.online ||
+        !_dagBusinessSelected ||
+        gateway is! DAGEnvironmentGateway ||
+        !supports('rotateEnvironmentKey') ||
+        !environments.any((e) => e.id == id && e.role == AccessRole.admin)) {
+      throw const GatewayFailure('当前环境没有已验轮换权限或入口。');
+    }
+    try {
+      final reply = await (gateway as DAGEnvironmentGateway)
+          .changeDAGEnvironment('rotateDAGEnvironment', id, Uint8List(0));
+      await _applyDAGEnvironmentReply(reply, epoch);
+    } finally {
+      if (!_disposed && epoch == _epoch) _syncDAGBusinessPending();
+    }
+  });
+
   Future<void> setVariable(
     String environmentId,
     String name,
