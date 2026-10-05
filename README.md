@@ -1,33 +1,37 @@
-# 和弦 Harmonia — 手机端
+# Harmonia 手机端
 
-Flutter 手机界面与 Go 核心之间的手机适配边界。Android 为首版目标，保留 iOS 源工程。当前是实验实现，不可用于生产秘密。
+在手机上管理环境变量，为电脑和其它设备分配访问权限。Harmonia 手机端配合 [自托管服务](https://github.com/harmonia-vault/server)和 [命令行客户端](https://github.com/harmonia-vault/core-go)使用。
 
-## 已实现
+## 开始使用
 
-- 中文 Material 3 界面：环境与变量编辑、设备角色/期限选择、恢复轮换重输与结果查询、HTTPS 地址与登录入口。
-- 显式合成预览中的环境/变量 CRUD、只读限制、检查点倒退拒绝、提交后拉取更新；无网络或文件持久化。
-- 默认路径拒绝真实读取、登录、批准、撤销和恢复，不发送密码或短码。
-- Go/JNI 密码学桥与系统设备密码或强生物认证的 AES 包封；Android14/API34 隔离 AVD 实际六项原生验收通过，真实业务网关仍未接通。
+准备好手机端应用和服务的 HTTPS 地址。
 
-## 本机开发
+1. 打开应用，填写服务基础地址，例如 `https://vault.example.com`，无需添加接口路径。
+2. 注册或登录账号，按提示完成邮箱验证。
+3. 首次使用时初始化账号，保存恢复码并完整输入确认。
+4. 创建一个环境，添加需要同步的变量。
 
-使用官方 Flutter **3.47.6**（Dart **3.13.5**）、Java **17**、Android SDK 平台 **36**。`tool/flutter.sh` 校验 Flutter 精确版本；`pubspec.lock` 固定依赖。工具版本在 `mise.toml` 固定，Flutter 默认由 `mise where flutter@3.47.6` 解析，也可用 `HARMONIA_FLUTTER_SDK` 显式指定同版本官方 SDK。`mise run android-debug` 先构建固定 BoringSSL/Go AAR，再构建 Flutter APK。NDK28.2.13676358 须先安装；任务不隐式接受许可证。SDK、Java 与 CMake 本机路径仅写入忽略的配置文件。
+普通账号登录不会自动授予设备访问权。已有账号在新手机上使用时，需要按应用提示完成设备授权或恢复。
 
-```sh
-mise run deps
-mise run analyze
-mise run test-domain
-mise run android-debug
-```
+## 日常操作
 
-`mise run preview` 仅在主动选择测试模拟器后使用。合成预览必须显式传入 `--dart-define=HARMONIA_PREVIEW=true`；不传时默认拒绝真实操作。不要输入真实邮箱密码、恢复码或生产秘密。
+| 操作 | 使用方法 |
+| --- | --- |
+| 管理变量 | 打开环境，添加、编辑或删除变量；只读权限不能修改内容 |
+| 授权电脑 | 在 CLI 发起配对，再在手机上核对请求、输入短码并选择环境、角色和期限 |
+| 调整权限 | 在设备页面查看授权，修改权限或撤销不再使用的设备 |
+| 查看同步结果 | 提交修改后等待同步完成；遇到结果不明时，按提示查询原操作 |
+| 保护应用 | 使用系统认证；仅在应用明确提供时使用 App PIN |
+| 更换服务或账号 | 使用应用内的切换或退出入口，避免沿用旧账号状态 |
 
-测试证据与未跑项目见 [验证记录](docs/VALIDATION.md)。控制层测试属于业务边界验证，不包含 UI 单元测试。Android 调试产物只用于本机测试，不公开发布。
+## 恢复与重置
 
-## 未完成
+丢失设备时，使用恢复码按向导恢复，并生成、保存和确认新的恢复码。恢复后还需要明确选择新设备的权限。
 
-窄 Go 原生桥及设备密码包封已实测；首次可信手机、远程 SPAKE2 批准、真实服务器验签同步与恢复原子轮换尚未接入 Flutter 业务网关。强生物成功与硬件保护未在真机验收，iOS 未构建运行。界面入口不代表这些安全能力已实现，合成预览不能撤销任何真实设备。
+忘记 App PIN 不能找回原 PIN，需要清除本机保护状态后重新登录和授权。邮箱账号重置会删除旧数据，不能用来取回旧保险库。
 
-[整体技术设计](https://github.com/harmonia-vault/workspace/blob/main/docs/DESIGN.md) · [Go 桥边界](docs/GO_BRIDGE.md) · [界面设计](DESIGN.md)
+当前为实验性软件，请使用非生产数据。预览模式中的内容仅用于演示，不会同步到真实账号。
 
-MIT 许可证。
+## 许可证
+
+[MIT](LICENSE)
