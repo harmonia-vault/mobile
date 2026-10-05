@@ -55,6 +55,14 @@ abstract interface class NativeLocalProtectionPort {
   Future<LocalProtectionStatus> localProtectionInfo(String endpoint);
 }
 
+abstract interface class NativeAccountPort {
+  Future<Map<String, Object?>> executeAccount(
+    String endpoint,
+    String operation,
+    Map<String, String> fields,
+  );
+}
+
 abstract interface class NativeFixtureConnectionPort {
   Future<Map<String, Object?>> fixtureConnectionInfo();
 }
@@ -64,12 +72,39 @@ class MethodChannelGatewayPort
         NativeGatewayPort,
         NativeFixtureConnectionPort,
         NativeLocalProtectionPort,
+        NativeAccountPort,
         NativeDAGRecoveryPort,
         NativeDAGProfilePort,
         NativePendingPairingsPort,
         NativeDAGBusinessPort,
         NativeDAGEnvironmentPort {
   const MethodChannelGatewayPort();
+  @override
+  Future<Map<String, Object?>> executeAccount(
+    String endpoint,
+    String operation,
+    Map<String, String> fields,
+  ) async {
+    const channel = MethodChannel('org.harmoniavault/native/v1');
+    final raw = await channel.invokeMethod<String>(
+      'executeAccount',
+      jsonEncode({
+        'version': 1,
+        'operation': operation,
+        'endpoint': endpoint,
+        ...fields,
+      }),
+    );
+    if (raw == null || raw.length > 65536) {
+      throw const GatewayFailure('账号请求未返回有效结果，请稍后重试。');
+    }
+    final result = nativeObject(jsonDecode(raw), '账号');
+    if (result['version'] != 1 || result['ok'] is! bool) {
+      throw const GatewayFailure('账号响应格式无效。');
+    }
+    return Map.unmodifiable(result);
+  }
+
   @override
   Future<Map<String, Object?>> dagEnvironmentProfile() =>
       const NativeDAGEnvironmentAdapter().dagEnvironmentProfile();
@@ -159,11 +194,11 @@ class MethodChannelGatewayPort
     String f(String key) => fields[key]!;
     return switch (operation) {
       'register' => a.register(f('email'), f('password')),
+      'requestVerificationEmail' => a.requestVerificationEmail(f('email')),
       'verifyEmail' => a.verifyEmail(
         accountId: f('accountId'),
         accountGeneration: f('accountGeneration'),
-        challengeId: f('challengeId'),
-        token: f('token'),
+        code: f('code'),
       ),
       'loginAccount' => a.loginAccount(f('email'), f('password')),
       'restoreSession' => a.restoreSession(),
@@ -196,12 +231,9 @@ class MethodChannelGatewayPort
         f('id'),
       ),
       'businessPendingInfo' => a.businessPendingInfo(),
-      'approvalInfoV3' => a.approvalInfoV3(),
-      'retryApprovalV3' => a.retryApprovalV3(f('pairingId')),
-      'cancelApprovalV3' => a.cancelApprovalV3(f('pairingId')),
-      'approvalInfoV4' => a.approvalInfoV4(),
-      'retryApprovalV4' => a.retryApprovalV4(f('pairingId')),
-      'cancelApprovalV4' => a.cancelApprovalV4(f('pairingId')),
+      'approvalInfoV5' => a.approvalInfoV5(),
+      'retryApprovalV5' => a.retryApprovalV5(f('pairingId')),
+      'cancelApprovalV5' => a.cancelApprovalV5(f('pairingId')),
       'retryBusinessOperation' => a.retryBusinessOperation(f('id')),
       'managementDevices' => a.managementDevices(f('environmentId')),
       'prepareDeviceGrant' => a.prepareDeviceGrant(
@@ -233,24 +265,12 @@ class MethodChannelGatewayPort
     List<NativeApprovalSelection> selections,
   ) {
     final a = NativeWorkflowAdapter(endpoint);
-    return switch (version) {
-      2 => a.approvePairing(
-        pairingId: pairingId,
-        shortCode: shortCode,
-        selections: selections,
-      ),
-      3 => a.approvePairingV3(
-        pairingId: pairingId,
-        shortCode: shortCode,
-        selections: selections,
-      ),
-      4 => a.approvePairingV4(
-        pairingId: pairingId,
-        shortCode: shortCode,
-        selections: selections,
-      ),
-      _ => throw const GatewayFailure('本次流程没有已核验的明确审批版本。'),
-    };
+    if (version != 5) throw const GatewayFailure('配对请求无法使用，请重新发起。');
+    return a.approvePairingV5(
+      pairingId: pairingId,
+      shortCode: shortCode,
+      selections: selections,
+    );
   }
 }
 
@@ -264,6 +284,7 @@ class NativeVaultGateway
         ServerScopeGateway,
         InitializationGateway,
         EmailProofGateway,
+        EmailVerificationRequestGateway,
         ApprovalContinuationGateway,
         BusinessPendingGateway,
         LocalProtectionGateway,
@@ -273,6 +294,17 @@ class NativeVaultGateway
         AccountResetGatewayProvider,
         DAGBusinessGateway,
         DAGEnvironmentGateway {
+  /// 产品启用范围仍须与平台实际编译能力、系统认证和运行时协议求交。
+  factory NativeVaultGateway.production({bool productFixture = false}) =>
+      NativeVaultGateway(
+        experimentalOptIn: true,
+        productFixture: productFixture,
+        verifiedDAGOperations: dagRecoveryFields.keys.toSet(),
+        verifiedDAGBusinessOperations: dagBusinessFields.keys.toSet(),
+        verifiedDAGEnvironmentOperations: dagEnvironmentFields.keys.toSet(),
+        verifiedAccountResetActions: AccountResetAction.values.toSet(),
+      );
+
   NativeVaultGateway({
     required this.experimentalOptIn,
     this.productFixture = false,
@@ -329,6 +361,7 @@ class NativeVaultGateway
       ),
       endpoint,
       () => epoch == _scopeEpoch && endpoint == _endpoint && !_cleanupPending,
+      onCompleted: _clearLocalDeviceProjection,
     );
   }
 
@@ -678,19 +711,31 @@ class NativeVaultGateway
   Set<String> _compiledPendingPairingOperations = const {};
   int _pendingPairingEpoch = 0;
   bool _pendingPairingReading = false;
-  String get _pendingPairingOperation => switch (_approvalVersion) {
-    3 => 'pendingPairingRequestsV3',
-    4 => 'pendingPairingRequestsV4',
-    _ => '',
-  };
+  NativeTrustedProjection? get _approvalTrust {
+    if (!_dagSelected) return _trusted;
+    final source = _dagTrusted;
+    return source == null
+        ? null
+        : NativeTrustedProjection(
+            source.session,
+            source.deviceId,
+            source.snapshot,
+          );
+  }
+
+  String get _pendingPairingOperation =>
+      _approvalVersion == 5 ? 'pendingPairingRequestsV5' : '';
   @override
   bool get pendingPairingsAvailable =>
       experimentalOptIn &&
-      !_dagSelected &&
+      (!_dagSelected ||
+          _dagAllPendingKnown && !dagBusinessPending.any((p) => p.canRetry)) &&
       _systemStrong &&
       _port is NativePendingPairingsPort &&
-      _trusted != null &&
-      _trusted!.view.environments.any((e) => e.role == AccessRole.admin) &&
+      _approvalTrust != null &&
+      _approvalTrust!.view.environments.any(
+        (e) => e.role == AccessRole.admin,
+      ) &&
       !_pendingUnknown &&
       !_managementOperation.unresolved &&
       _approvalPendingId == null &&
@@ -712,13 +757,13 @@ class NativeVaultGateway
       throw const GatewayFailure('当前设备没有已验证的前台请求读取能力。');
     }
     final epoch = _pendingPairingEpoch, scope = _scopeEpoch;
-    final operation = _pendingPairingOperation, before = _trusted!;
+    final operation = _pendingPairingOperation, before = _approvalTrust!;
     bool current() =>
         epoch == _pendingPairingEpoch &&
         scope == _scopeEpoch &&
         !_cleanupPending &&
         _pendingPairingOperation == operation &&
-        !_dagSelected;
+        _approvalTrust != null;
     _pendingPairingReading = true;
     try {
       await refreshLocalProtection();
@@ -736,7 +781,7 @@ class NativeVaultGateway
         throw const GatewayFailure('已丢弃原请求范围的晚到结果。');
       }
       final snapshot = decodePendingPairings(operation, raw);
-      final after = _trusted;
+      final after = _approvalTrust;
       if (after == null ||
           snapshot.accountId != before.session.accountId ||
           snapshot.accountGeneration != before.session.accountGeneration ||
@@ -745,6 +790,7 @@ class NativeVaultGateway
           after.session.accountGeneration != before.session.accountGeneration ||
           after.deviceId != before.deviceId) {
         _trusted = null;
+        _dagTrusted = null;
         _approvalVersion = 0;
         retirePendingPairingResults();
         throw const GatewayFailure(
@@ -760,6 +806,7 @@ class NativeVaultGateway
           (failure.trustInvalidated ||
               failure.code == 'LOCAL_PROTECTION_PERSISTENCE')) {
         _trusted = null;
+        _dagTrusted = null;
         _approvalVersion = 0;
         retirePendingPairingResults();
         if (failure.code == 'LOCAL_PROTECTION_PERSISTENCE') {
@@ -834,7 +881,8 @@ class NativeVaultGateway
       if (epoch != _recoveryEpoch || scope != _scopeEpoch) {
         throw const GatewayFailure('恢复本机范围已关闭。');
       }
-      _dagSelected = true;
+      // 查询设备登记不会把没有恢复记录的首机切换为恢复来源。
+      if (operation != 'dagRecoveredDeviceInfo') _dagSelected = true;
       _trusted = null;
       final raw = await _platform(
         () => (_port as NativeDAGRecoveryPort).executeDAGRecovery(
@@ -849,6 +897,9 @@ class NativeVaultGateway
       }
       final reply = decodeDAGRecovery(operation, raw);
       final result = reply.payload;
+      if (result is RecoveryEnrollment && result.state != 'none') {
+        _dagSelected = true;
+      }
       if (result is RecoveryResolution &&
           (operation == 'queryDAGRecoveryResolution' ||
               operation == 'closeDAGRecoveryOriginal') &&
@@ -875,6 +926,7 @@ class NativeVaultGateway
           );
         }
         _dagTrusted = result;
+        _approvalVersion = 5;
         // 每次正式恢复先核原来源的持久pending，不能借只读视图推断新写资格。
         _dagPendingKnown = false;
         _dagEnvironmentPendingKnown = false;
@@ -925,7 +977,7 @@ class NativeVaultGateway
       VaultDevice(
         id: source.deviceId,
         name: '本机',
-        platform: 'Android',
+        platform: Platform.isIOS ? 'iOS' : 'Android',
         current: true,
         accessSummary: source.snapshot.environments
             .map((e) => '${e.name}：${e.role.label}')
@@ -1418,6 +1470,7 @@ class NativeVaultGateway
     'retryBusinessOperation',
     'register',
     'verifyEmail',
+    'requestVerificationEmail',
     'beginInitialization',
     'completeInitialization',
     'queryInitialization',
@@ -1428,25 +1481,18 @@ class NativeVaultGateway
     'deleteEnvironment',
     'setVariable',
     'deleteVariable',
-    'approvePairing',
-    'retryApproval',
-    'approvalInfo',
-    'cancelApproval',
-    'approvePairingV3',
-    'retryApprovalV3',
-    'approvalInfoV3',
-    'cancelApprovalV3',
-    'approvePairingV4',
-    'retryApprovalV4',
-    'approvalInfoV4',
-    'cancelApprovalV4',
+    'approvePairingV5',
+    'retryApprovalV5',
+    'approvalInfoV5',
+    'cancelApprovalV5',
     'logout',
   };
   // 逐项来自实际 MainActivity PIN/JNI/HTTPS/CLI3 纵链；不是设备可信声明。
-  // V4、恢复、迁移、轮换、管理及未实测查询/取消保持关闭。
+  // 原生保护能力仍按各项实际验证结果开放。
   static const _pinEvidence = {
     'register',
     'verifyEmail',
+    'requestVerificationEmail',
     'loginAccount',
     'beginInitialization',
     'completeInitialization',
@@ -1458,8 +1504,8 @@ class NativeVaultGateway
     'deleteEnvironment',
     'setVariable',
     'deleteVariable',
-    'approvePairingV3',
-    'retryApprovalV3',
+    'approvePairingV5',
+    'retryApprovalV5',
     'pull',
   };
   Set<String> _runtimeOperations = const {};
@@ -1483,27 +1529,44 @@ class NativeVaultGateway
   Set<String> get runtimeOperations => _runtimeOperations;
   bool get protectedDeviceExists => _protectedDeviceExists;
   bool get realVaultReady => false;
-  bool _has(String operation) =>
-      experimentalOptIn &&
-      (!_managementOperation.unresolved ||
-          operation == _managementPreparingOperation ||
-          const {
-            'managementInfo',
-            'retryManagement',
-            'cancelManagement',
-            'logout',
-          }.contains(operation)) &&
-      _runtimeOperations.contains(operation) &&
-      (_localProtection?.mode == LocalProtectionMode.pin
-          ? _localProtection!.pinWorkflowReady &&
-                !_localProtection!.upgradeRequired &&
-                _localProtection!.systemCapability == 'NO_SYSTEM_AUTH' &&
-                !managementOperations.contains(operation) &&
-                _verifiedPINOperations.contains(operation)
-          : _systemStrong &&
-                (managementOperations.contains(operation)
-                    ? _verifiedManagementOperations.contains(operation)
-                    : _verifiedOperations.contains(operation)));
+  bool _publicAccountReady = false;
+  bool _isPublicAccount(String operation) =>
+      _publicAccountReady &&
+      const {
+        'register',
+        'verifyEmail',
+        'requestVerificationEmail',
+        'loginAccount',
+      }.contains(operation);
+  bool _has(String operation) {
+    if (!experimentalOptIn || !_runtimeOperations.contains(operation)) {
+      return false;
+    }
+    if (_managementOperation.unresolved &&
+        operation != _managementPreparingOperation &&
+        !const {
+          'managementInfo',
+          'retryManagement',
+          'cancelManagement',
+          'logout',
+        }.contains(operation)) {
+      return false;
+    }
+    if (_isPublicAccount(operation)) {
+      return _verifiedOperations.contains(operation);
+    }
+    if (_localProtection?.mode == LocalProtectionMode.pin) {
+      return _localProtection!.pinWorkflowReady &&
+          !_localProtection!.upgradeRequired &&
+          _localProtection!.systemCapability == 'NO_SYSTEM_AUTH' &&
+          !managementOperations.contains(operation) &&
+          _verifiedPINOperations.contains(operation);
+    }
+    return _systemStrong &&
+        (managementOperations.contains(operation)
+            ? _verifiedManagementOperations.contains(operation)
+            : _verifiedOperations.contains(operation));
+  }
 
   @override
   void bindLocalPINCallbacks({
@@ -1667,6 +1730,10 @@ class NativeVaultGateway
     String op,
     Map<String, String> fields,
   ) async {
+    if (_isPublicAccount(op)) {
+      _require(op);
+      return (_port as NativeAccountPort).executeAccount(endpoint, op, fields);
+    }
     await refreshLocalProtection();
     _require(op);
     if (_localProtection?.mode != LocalProtectionMode.pin) {
@@ -1711,6 +1778,16 @@ class NativeVaultGateway
   @override
   Set<String> get capabilities => _dagSelected
       ? Set.unmodifiable({
+          if (_approvalVersion == 5) ...{
+            if (_dagTrusted != null &&
+                _dagAllPendingKnown &&
+                !dagBusinessPending.any((p) => p.canRetry) &&
+                _has(_approvalOperation))
+              'approveDevice',
+            if (_has(_approvalInfoOperation)) 'queryApproval',
+            if (_has(_approvalRetryOperation)) 'retryApproval',
+            if (_has(_approvalCancelOperation)) 'cancelApproval',
+          },
           if (_hasDAGBusiness('pendingDAGWrites')) 'businessPendingInfo',
           if (_hasDAGBusiness('retryDAGWrite')) 'retryBusinessOperation',
           if (_hasDAGBusiness('pendingDAGWrites') &&
@@ -1743,6 +1820,7 @@ class NativeVaultGateway
             if (_has(op)) op,
           if (_has('register')) 'registerAccount',
           if (_has('verifyEmail')) 'verifyEmail',
+          if (_has('requestVerificationEmail')) 'requestVerificationEmail',
           if (_has('loginAccount')) 'loginAccount',
           if (_has('restoreSession') && _has('businessPendingInfo'))
             'restoreSession',
@@ -1772,30 +1850,28 @@ class NativeVaultGateway
           if (_has(_approvalRetryOperation)) 'retryApproval',
           if (_has(_approvalCancelOperation)) 'cancelApproval',
         });
-  String get _approvalOperation => switch (_approvalVersion) {
-    2 => 'approvePairing',
-    3 => 'approvePairingV3',
-    4 => 'approvePairingV4',
-    _ => '',
-  };
-  String get _approvalInfoOperation => switch (_approvalVersion) {
-    3 => 'approvalInfoV3',
-    4 => 'approvalInfoV4',
-    _ => '',
-  };
-  String get _approvalRetryOperation => switch (_approvalVersion) {
-    3 => 'retryApprovalV3',
-    4 => 'retryApprovalV4',
-    _ => '',
-  };
-  String get _approvalCancelOperation => switch (_approvalVersion) {
-    3 => 'cancelApprovalV3',
-    4 => 'cancelApprovalV4',
-    _ => '',
-  };
+  String get _approvalOperation =>
+      _approvalVersion == 5 ? 'approvePairingV5' : '';
+  String get _approvalInfoOperation =>
+      _approvalVersion == 5 ? 'approvalInfoV5' : '';
+  String get _approvalRetryOperation =>
+      _approvalVersion == 5 ? 'retryApprovalV5' : '';
+  String get _approvalCancelOperation =>
+      _approvalVersion == 5 ? 'cancelApprovalV5' : '';
 
   void _require(String operation) {
-    if (_dagSelected && operation != 'logout' ||
+    final approval = {
+      'approvePairingV5',
+      'approvalInfoV5',
+      'retryApprovalV5',
+      'cancelApprovalV5',
+    }.contains(operation);
+    if (_dagSelected && operation != 'logout' && !approval ||
+        _dagSelected &&
+            operation == 'approvePairingV5' &&
+            (_dagTrusted == null ||
+                !_dagAllPendingKnown ||
+                dagBusinessPending.any((p) => p.canRetry)) ||
         !_has(operation) ||
         _endpoint.isEmpty ||
         _cleanupPending && operation != 'logout') {
@@ -1895,13 +1971,15 @@ class NativeVaultGateway
         throw const GatewayFailure('账号重置编译能力配置无效，当前不可用。');
       }
     }
+    _publicAccountReady =
+        caps['nativePublicAccount'] == true && _port is NativeAccountPort;
     _compiledAccountResetActions = compiledAccountResetActions(caps);
     _systemStrong = caps['systemStrongAuthentication'] == true;
     if (caps['appPINDeviceExists'] == true) _pinPreviouslyObserved = true;
     _protectedDeviceExists = caps['protectedDeviceExists'] == true;
     _runtimeOperations = Set.unmodifiable(operations.cast<String>());
     final compiledPending = <String>{};
-    for (final version in ['3', '4']) {
+    for (final version in ['5']) {
       final key = 'nativePendingPairingRequestsV$version';
       if (caps.containsKey(key) && caps[key] is! bool) {
         throw const GatewayFailure('前台请求编译能力配置无效。');
@@ -2048,7 +2126,7 @@ class NativeVaultGateway
     String password,
   ) async {
     _require('loginAccount');
-    await _ensureDevice();
+    if (!_publicAccountReady) await _ensureDevice();
     return decodeAccountAuthentication(
       nativeData(
         await _execute('loginAccount', {'email': email, 'password': password}),
@@ -2062,7 +2140,7 @@ class NativeVaultGateway
     String password,
   ) async {
     _require('register');
-    await _ensureDevice();
+    if (!_publicAccountReady) await _ensureDevice();
     final data = NativeRegistration.parse(
       nativeData(
         await _execute('register', {'email': email, 'password': password}),
@@ -2078,21 +2156,37 @@ class NativeVaultGateway
   @override
   Future<void> verifyEmail(
     AccountRegistration registration,
-    String challengeId,
-    String token,
+    String code,
   ) async {
     nativeData(
       await _execute('verifyEmail', {
         'accountId': registration.accountId,
         'accountGeneration': registration.accountGeneration,
-        'challengeId': challengeId,
-        'token': token,
+        'code': code,
       }),
     );
   }
 
   @override
+  Future<void> requestVerificationEmail(String email) async {
+    final data = nativeObject(
+      nativeData(await _execute('requestVerificationEmail', {'email': email})),
+      '验证邮件',
+    );
+    nativeFields(data, {'accepted'});
+    if (data['accepted'] != true) {
+      throw const GatewayFailure('验证邮件发送未完成，请重试。');
+    }
+  }
+
+  @override
   Future<VaultSession> restoreSession() async {
+    if (!_dagSelected &&
+        _protectedDeviceExists &&
+        recoveryCapabilities.contains('dagRecoveredDeviceInfo')) {
+      // 重启后依据已解密的本机登记记录选择来源，不凭登录结果推断设备信任。
+      await executeRecovery('dagRecoveredDeviceInfo', const {}, Uint8List(0));
+    }
     if (_dagSelected) {
       final reply = await executeRecovery(
         'restoreDAGRecoveredDevice',
@@ -2115,18 +2209,11 @@ class NativeVaultGateway
       nativeData(await _execute('businessPendingInfo', {})),
     );
     _pendingUnknown = pending.any((item) => item.canRetry);
-    final previous = _trusted;
-    final sameExplicitScope =
-        previous != null &&
-        previous.session.accountId == projection.session.accountId &&
-        previous.session.accountGeneration ==
-            projection.session.accountGeneration &&
-        previous.deviceId == projection.deviceId;
     _trusted = projection;
     _deviceId = projection.deviceId;
     _checkpoint = projection.view.checkpoint;
-    // 恢复投影没有来源证书版本，绝不据公钥/root猜测或自动fallback。
-    if (!sameExplicitScope) _approvalVersion = 0;
+    // 唯一协议下，可信恢复投影已由 Go 校验完整 DAG。
+    _approvalVersion = 5;
     return VaultSession.withBusinessPending(projection.session, pending);
   }
 
@@ -2172,7 +2259,7 @@ class NativeVaultGateway
         VaultDevice(
           id: _deviceId,
           name: '本机',
-          platform: 'Android',
+          platform: Platform.isIOS ? 'iOS' : 'Android',
           current: true,
           accessSummary: view.environments
               .map((e) => '${e.name}：${e.role.label}')
@@ -2353,7 +2440,7 @@ class NativeVaultGateway
       originalId: _initializationId,
     );
     final session = await restoreSession();
-    _approvalVersion = 3;
+    _approvalVersion = 5;
     _initializationId = null;
     return session;
   }
@@ -2379,12 +2466,11 @@ class NativeVaultGateway
     if (_approvalPendingId != null) {
       throw const GatewayFailure('已有原审批事务；必须查询原PairID，不得替换短码或范围。');
     }
-    if (_trusted == null || draft.roles.isEmpty || draft.roles.length > 16) {
+    final trusted = _approvalTrust;
+    if (trusted == null || draft.roles.isEmpty || draft.roles.length > 16) {
       throw const GatewayFailure('需要可信设备及1–16项明确环境选择。');
     }
-    final available = {
-      for (final e in _trusted!.view.environments) e.id: e.role,
-    };
+    final available = {for (final e in trusted.view.environments) e.id: e.role};
     if (draft.roles.keys.any((id) => available[id] != AccessRole.admin)) {
       throw const GatewayFailure('只可批准本机已验管理权限的环境。');
     }
@@ -2553,7 +2639,20 @@ class NativeVaultGateway
     _cleanupPending = true;
     _trusted = null;
     _approvalVersion = 0;
-    nativeData(await _execute('logout', {}));
+    // 仅有账号操作时没有本机密钥可解锁。存在任意保护材料仍执行原退出流程。
+    final caps = _publicAccountReady ? await _port.capabilities() : null;
+    if (caps?['nativePublicAccount'] != true ||
+        caps?['protectedStateExists'] != false) {
+      nativeData(await _execute('logout', {}));
+    }
+    _clearLocalDeviceProjection();
+  }
+
+  // 只在原生退出或账号重置已确认本机清理之后重置缓存。
+  void _clearLocalDeviceProjection() {
+    _trusted = null;
+    _dagTrusted = null;
+    _localProtection = null;
     _protectedDeviceExists = false;
     _deviceId = '';
     _checkpoint = 0;
@@ -2605,8 +2704,10 @@ Future<InstanceDescriptor> inspectHarmoniaInstance(
         .timeout(const Duration(seconds: 10));
     request.followRedirects = false;
     request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+    request.headers.set('Harmonia-Protocol-Major', '2');
     final response = await request.close().timeout(const Duration(seconds: 10));
-    if (response.statusCode != 200) {
+    if (response.statusCode != 200 ||
+        response.headers.value('Harmonia-Protocol-Major') != '2') {
       throw GatewayFailure(
         '服务验证失败（HTTP ${response.statusCode}），请确认 Harmonia 地址后重试。',
       );

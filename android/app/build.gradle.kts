@@ -3,6 +3,7 @@ import java.nio.file.Files
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.util.Base64
+import java.util.Properties
 import groovy.json.JsonSlurper
 
 plugins {
@@ -16,7 +17,14 @@ val productFixtureRaw = providers.gradleProperty("harmoniaProductFixture").getOr
 check(productFixtureRaw in setOf("true", "false")) { "harmoniaProductFixture只能为true/false。" }
 val productFixture = productFixtureRaw == "true"
 val nativeFixture = providers.gradleProperty("harmoniaNativeFixture").getOrElse("false") == "true"
+val preview = providers.gradleProperty("harmoniaPreview").getOrElse("false") == "true"
+check(!preview || (!productFixture && !nativeFixture)) { "预览包不能与原生或产品测试包混合。" }
 check(!(productFixture && nativeFixture)) { "productfixture与nativefixture不能混合。" }
+
+val releaseSigningFile = rootProject.file("key.properties")
+val releaseSigning = Properties().apply {
+    if (releaseSigningFile.isFile) releaseSigningFile.inputStream().use { load(it) }
+}
 if (productFixture) {
     check(gradle.startParameter.taskNames.none {
         val name = it.substringAfterLast(':').lowercase()
@@ -67,8 +75,23 @@ android {
 
     buildFeatures { buildConfig = true }
 
+    signingConfigs {
+        if (releaseSigningFile.isFile) {
+            create("localRelease") {
+                storeFile = file(releaseSigning.getProperty("storeFile"))
+                storePassword = releaseSigning.getProperty("storePassword")
+                keyAlias = releaseSigning.getProperty("keyAlias")
+                keyPassword = releaseSigning.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         debug {
+            if (preview) {
+                applicationIdSuffix = ".preview"
+                manifestPlaceholders["appLabel"] = "和弦预览"
+            }
             if (productFixture) {
                 applicationIdSuffix = ".productfixture"
                 buildConfigField("boolean", "HARMONIA_PRODUCT_FIXTURE", "true")
@@ -80,6 +103,9 @@ android {
                 applicationIdSuffix = ".nativefixture"
             }
         }
+        release {
+            if (releaseSigningFile.isFile) signingConfig = signingConfigs.getByName("localRelease")
+        }
     }
 
     compileOptions {
@@ -90,6 +116,7 @@ android {
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "org.harmoniavault.harmonia_mobile"
+        manifestPlaceholders["appLabel"] = "和弦"
         buildConfigField("boolean", "HARMONIA_PRODUCT_FIXTURE", "false")
         buildConfigField("String", "HARMONIA_FIXTURE_ENDPOINT", "\"\"")
         buildConfigField("String", "HARMONIA_FIXTURE_CA_BASE64", "\"\"")

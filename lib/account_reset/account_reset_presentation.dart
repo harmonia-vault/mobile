@@ -34,12 +34,14 @@ class AccountResetPresentation {
     this.queryOnly = false,
     this.localCleanupConfirmed = false,
     this.error,
+    this.emailRetryAt,
     Iterable<AccountResetAction> actions = const [],
   }) : actions = Set.unmodifiable(actions);
   final AccountResetStage stage;
   final String status, accountId, accountGeneration, source;
   final bool busy, queryOnly, localCleanupConfirmed;
   final String? error;
+  final DateTime? emailRetryAt;
   final Set<AccountResetAction> actions;
   bool get trustedDevice => false;
   bool allows(AccountResetAction action) => actions.contains(action);

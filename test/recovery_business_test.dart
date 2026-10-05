@@ -511,7 +511,11 @@ void main() {
     expect(c.canEnterVault, true);
     expect(c.recovery.trustedDevice, true);
     expect(c.environments.single.variables.single.value, 'synthetic-only');
-    expect(g.capabilities, isEmpty);
+    expect(g.capabilities, {
+      'queryApproval',
+      'retryApproval',
+      'cancelApproval',
+    });
     await c.reload();
     expect(f.dagCalls.last.$1, 'pullDAGRecoveredDevice');
     expect(

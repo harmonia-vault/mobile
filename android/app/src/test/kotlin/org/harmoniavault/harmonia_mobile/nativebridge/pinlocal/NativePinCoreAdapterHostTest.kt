@@ -66,7 +66,7 @@ internal object NativePinCoreAdapterHostTest {
             }
         }
         test("state CAS rejects lost original/moved namespace and bounded malformed packets") {
-            val packet = ByteArray(40).also { "HARMST01".toByteArray().copyInto(it) }
+            val packet = ByteArray(40).also { "HARMST02".toByteArray().copyInto(it) }
             PinNativeStateCAS.validate(packet)
             PinNativeStateCAS.match(PinNativeStateCAS.hash(ByteArray(0)), ByteArray(0))
             PinNativeStateCAS.match(PinNativeStateCAS.hash(packet), packet)

@@ -25,6 +25,7 @@ ios/Flutter/.last_build_id
 ios/Pods/
 ios/.symlinks/
 android/.gradle/
+android/.kotlin/
 android/app/debug/
 android/app/profile/
 android/app/release/

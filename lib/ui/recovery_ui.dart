@@ -54,7 +54,12 @@ class _RecoveryPanelState extends State<RecoveryPanel> {
   final _password = TextEditingController();
   final _current = TextEditingController();
   final _reentry = TextEditingController();
-  late final List<TextEditingController> _inputs = [_email, _password, _current, _reentry];
+  late final List<TextEditingController> _inputs = [
+    _email,
+    _password,
+    _current,
+    _reentry,
+  ];
   late final SensitiveInputGuard _guard;
   late String _scope;
   final _picks = <String, _Pick>{};
@@ -79,7 +84,10 @@ class _RecoveryPanelState extends State<RecoveryPanel> {
   void didUpdateWidget(RecoveryPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     final scope = _c.sensitiveFormScope;
-    final changedController = !identical(oldWidget.controller, widget.controller);
+    final changedController = !identical(
+      oldWidget.controller,
+      widget.controller,
+    );
     if (changedController || scope != _scope) {
       _scope = scope;
       _clearLocalForm();
@@ -131,7 +139,9 @@ class _RecoveryPanelState extends State<RecoveryPanel> {
     final controller = _c;
     final scope = _scope;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && identical(controller, _c) && scope == _c.sensitiveFormScope) {
+      if (mounted &&
+          identical(controller, _c) &&
+          scope == _c.sensitiveFormScope) {
         _hideCode();
       }
     });
@@ -182,7 +192,8 @@ class _RecoveryPanelState extends State<RecoveryPanel> {
     _password.clear();
     await _withCode(
       _current,
-      (code) => _c.openRecovery(email: email, password: password, currentCode: code),
+      (code) =>
+          _c.openRecovery(email: email, password: password, currentCode: code),
     )();
   }
 
@@ -200,9 +211,11 @@ class _RecoveryPanelState extends State<RecoveryPanel> {
     )();
   }
 
-  String _key(RecoveryEnvironmentChoice ch) => '${ch.environmentId}\u0000${ch.keyVersion}';
+  String _key(RecoveryEnvironmentChoice ch) =>
+      '${ch.environmentId}\u0000${ch.keyVersion}';
 
-  List<(RecoveryEnvironmentChoice, _Pick)> _selected(RecoveryPresentation m) => [
+  List<(RecoveryEnvironmentChoice, _Pick)> _selected(RecoveryPresentation m) =>
+      [
         for (final ch in m.choices)
           if (_picks[_key(ch)] case final p? when p.on) (ch, p),
       ];
@@ -221,147 +234,290 @@ class _RecoveryPanelState extends State<RecoveryPanel> {
     final list = <RecoverySelection>[];
     for (final (ch, p) in _selected(m)) {
       final d = p.term!.duration;
-      list.add(RecoverySelection(
-        environmentId: ch.environmentId,
-        keyVersion: ch.keyVersion,
-        role: p.role!,
-        expiry: d == null ? const RecoveryExpiry.untilRevoked() : RecoveryExpiry.until(now.add(d)),
-      ));
+      list.add(
+        RecoverySelection(
+          environmentId: ch.environmentId,
+          keyVersion: ch.keyVersion,
+          role: p.role!,
+          expiry: d == null
+              ? const RecoveryExpiry.untilRevoked()
+              : RecoveryExpiry.until(now.add(d)),
+        ),
+      );
     }
     await _c.sealRecoveryEnrollment(list);
   }
 
-  Widget _gap(Widget child) => Padding(padding: const EdgeInsets.only(top: 8), child: child);
+  Widget _gap(Widget child) =>
+      Padding(padding: const EdgeInsets.only(top: 8), child: child);
 
-  Widget _field(TextEditingController c, String label,
-      {bool obscure = false, TextInputType type = TextInputType.visiblePassword, String? helper}) {
-    return _gap(TextField(
-      controller: c,
-      enabled: !_pending,
-      obscureText: obscure,
-      keyboardType: type,
-      autocorrect: false,
-      enableSuggestions: false,
-      enableIMEPersonalizedLearning: false,
-      autofillHints: null,
-      smartDashesType: SmartDashesType.disabled,
-      smartQuotesType: SmartQuotesType.disabled,
-      decoration: InputDecoration(labelText: label, helperText: helper, helperMaxLines: 2),
-    ));
+  Widget _field(
+    TextEditingController c,
+    String label, {
+    bool obscure = false,
+    TextInputType type = TextInputType.visiblePassword,
+    String? helper,
+  }) {
+    return _gap(
+      TextField(
+        controller: c,
+        enabled: !_pending,
+        obscureText: obscure,
+        keyboardType: type,
+        autocorrect: false,
+        enableSuggestions: false,
+        enableIMEPersonalizedLearning: false,
+        autofillHints: null,
+        smartDashesType: SmartDashesType.disabled,
+        smartQuotesType: SmartQuotesType.disabled,
+        decoration: InputDecoration(
+          labelText: label,
+          helperText: helper,
+          helperMaxLines: 2,
+        ),
+      ),
+    );
   }
 
-  Widget _act(RecoveryPresentation m, RecoveryAction a, String label, Future<void> Function() task,
-      {bool ready = true, String? need, bool danger = false, bool primary = false}) {
-    final allowed = m.allows(a);
-    final onPressed = allowed && ready && !_pending ? () => _run(task) : null;
+  Widget _act(
+    RecoveryPresentation m,
+    RecoveryAction a,
+    String label,
+    Future<void> Function() task, {
+    bool ready = true,
+    String? need,
+    bool danger = false,
+    bool primary = false,
+  }) {
+    if (!m.allows(a)) return const SizedBox.shrink();
+    final onPressed = ready && !_pending ? () => _run(task) : null;
     final cs = Theme.of(context).colorScheme;
     final button = primary
         ? FilledButton(onPressed: onPressed, child: Text(label))
         : OutlinedButton(
             style: danger
                 ? OutlinedButton.styleFrom(
-                    foregroundColor: cs.error, side: BorderSide(color: cs.error))
+                    foregroundColor: cs.error,
+                    side: BorderSide(color: cs.error),
+                  )
                 : null,
             onPressed: onPressed,
             child: Text(label),
           );
-    final hint = !allowed ? m.unavailableReason(a) : (!ready ? need : null);
-    return _gap(Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      button,
-      if (hint != null)
-        Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: Text(hint, style: Theme.of(context).textTheme.bodySmall),
-        ),
-    ]));
+    final hint = !ready ? need : null;
+    return _gap(
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          button,
+          if (hint != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(hint, style: Theme.of(context).textTheme.bodySmall),
+            ),
+        ],
+      ),
+    );
   }
 
   HTone _stageTone(RecoveryPresentation m) => switch (m.stage) {
-        RecoveryStage.trusted => m.trustedDevice ? HTone.success : HTone.accent,
-        RecoveryStage.interrupted => HTone.warning,
-        RecoveryStage.closed => HTone.neutral,
-        _ => HTone.accent,
-      };
+    RecoveryStage.trusted => m.trustedDevice ? HTone.success : HTone.accent,
+    RecoveryStage.interrupted => HTone.warning,
+    RecoveryStage.closed => HTone.neutral,
+    _ => HTone.accent,
+  };
 
   @override
   Widget build(BuildContext context) {
     _checkScope();
     final m = _c.recovery;
+    const header = HHeader(title: '恢复访问', body: '使用恢复码，重新访问你的保险库。');
+    if (m.stage == RecoveryStage.entry && m.actions.isEmpty && !m.busy) {
+      return const HPage(
+        narrow: true,
+        children: [
+          header,
+          HNotice('当前无法在此设备恢复访问。你可以通过其他已授权设备重新授权。', icon: Icons.info_outline),
+        ],
+      );
+    }
     final keys = m.choices.map(_key).toSet();
     _picks.removeWhere((k, _) => !keys.contains(k));
 
-    bool rel(Set<RecoveryStage> s, List<RecoveryAction> a) => s.contains(m.stage) || a.any(m.allows);
-    final openRel = rel({RecoveryStage.entry}, [RecoveryAction.open]);
-    final queryRel = m.operationId != null || m.allows(RecoveryAction.queryOriginal);
-    final closureRel = rel({RecoveryStage.closed},
-        [RecoveryAction.queryClosure, RecoveryAction.closeOriginal, RecoveryAction.restartAfterClosure]);
+    bool rel(Set<RecoveryStage> s, List<RecoveryAction> a) =>
+        s.contains(m.stage) || a.any(m.allows);
+    final openRel =
+        m.allows(RecoveryAction.open) ||
+        (_pending && m.stage == RecoveryStage.entry);
+    final queryRel =
+        m.operationId != null || m.allows(RecoveryAction.queryOriginal);
+    final closureRel = rel(
+      {RecoveryStage.closed},
+      [
+        RecoveryAction.queryClosure,
+        RecoveryAction.closeOriginal,
+        RecoveryAction.restartAfterClosure,
+      ],
+    );
     final codeRel = openRel || queryRel || closureRel;
     final codeReady = _current.text.isNotEmpty;
     const needCode = '请先在“当前完整恢复码”中完整输入。';
 
-    return HPage(narrow: true, children: [
-      HHeader(
-        title: '恢复访问',
-        body: '使用当前恢复码恢复对保险库的访问。此功能仍为实验性。',
-        icon: Icons.restore,
-      ),
-      _statusSection(m),
-      if (openRel)
-        HSection(title: '账户验证', form: true, footer: '密码仅在本次请求中使用，提交前即清空输入框。', children: [
-          _field(_email, '账户邮箱', type: TextInputType.emailAddress),
-          _field(_password, '密码', obscure: true),
-        ]),
-      if (codeRel)
-        HSection(title: '当前完整恢复码', form: true, footer: '每次操作只读取一次并立即清空；下一次操作需重新完整输入。', children: [
-          _field(_current, '当前完整恢复码'),
-          if (openRel)
-            _act(m, RecoveryAction.open, '开启恢复', _open,
+    return HPage(
+      narrow: true,
+      children: [
+        header,
+        if (m.stage != RecoveryStage.entry || m.operationId != null)
+          _statusSection(m)
+        else if (!m.allows(RecoveryAction.open))
+          HSection(
+            form: true,
+            children: [
+              const Text('先检查是否有需要继续的恢复操作。'),
+              _act(
+                m,
+                RecoveryAction.inspect,
+                '检查恢复状态',
+                _c.inspectRecovery,
                 primary: true,
-                ready: _email.text.trim().isNotEmpty && _password.text.isNotEmpty && codeReady,
-                need: '请填写邮箱、密码和当前完整恢复码。'),
-          if (queryRel)
-            _act(m, RecoveryAction.queryOriginal, '查询原操作结果',
-                _withCode(_current, _c.queryRecoveryOriginal),
-                ready: codeReady, need: needCode),
-        ]),
-      if (rel({RecoveryStage.restricted, RecoveryStage.codePrepared, RecoveryStage.transitionPending},
-          [RecoveryAction.prepareCode, RecoveryAction.sealTransition, RecoveryAction.submitTransition]))
-        _newCodeSection(m),
-      if (rel({RecoveryStage.transitionConfirmed, RecoveryStage.enrollmentChoices, RecoveryStage.enrollmentPending},
-          [RecoveryAction.loadChoices, RecoveryAction.sealEnrollment, RecoveryAction.submitEnrollment]))
-        _enrollSection(m),
-      if (rel({RecoveryStage.enrollmentConfirmed, RecoveryStage.trusted},
-          [RecoveryAction.verifyDevice, RecoveryAction.restoreDevice, RecoveryAction.pullDevice]))
-        HSection(title: '本机验证', children: [
-          if (!m.trustedDevice)
-            HNotice('登记被接受或确认后，本设备仍不是可信设备；只有设备验证成功后才会成为可信设备。',
-                icon: Icons.info_outline),
-          _act(m, RecoveryAction.verifyDevice, '验证本设备', _c.verifyRecoveredDevice, primary: true),
-          _act(m, RecoveryAction.restoreDevice, '恢复本机数据', _c.restoreRecoveredDevice),
-          _act(m, RecoveryAction.pullDevice, '拉取最新数据', _c.pullRecoveredDevice),
-        ]),
-      _stopSection(m, codeReady, needCode),
-    ]);
+              ),
+            ],
+          ),
+        if (openRel)
+          HSection(
+            form: true,
+            children: [
+              _field(_email, '邮箱', type: TextInputType.emailAddress),
+              _field(_password, '密码', obscure: true),
+              _field(_current, '恢复码'),
+              _act(
+                m,
+                RecoveryAction.open,
+                '恢复访问',
+                _open,
+                primary: true,
+                ready:
+                    _email.text.trim().isNotEmpty &&
+                    _password.text.isNotEmpty &&
+                    codeReady,
+                need: '请输入邮箱、密码和恢复码。',
+              ),
+            ],
+          ),
+        if (codeRel && !openRel)
+          HSection(
+            title: '恢复码',
+            form: true,
+            children: [
+              _field(_current, '当前完整恢复码'),
+              if (queryRel)
+                _act(
+                  m,
+                  RecoveryAction.queryOriginal,
+                  '查询原操作结果',
+                  _withCode(_current, _c.queryRecoveryOriginal),
+                  ready: codeReady,
+                  need: needCode,
+                ),
+            ],
+          ),
+        if (rel(
+          {
+            RecoveryStage.restricted,
+            RecoveryStage.codePrepared,
+            RecoveryStage.transitionPending,
+          },
+          [
+            RecoveryAction.prepareCode,
+            RecoveryAction.sealTransition,
+            RecoveryAction.submitTransition,
+          ],
+        ))
+          _newCodeSection(m),
+        if (rel(
+          {
+            RecoveryStage.transitionConfirmed,
+            RecoveryStage.enrollmentChoices,
+            RecoveryStage.enrollmentPending,
+          },
+          [
+            RecoveryAction.loadChoices,
+            RecoveryAction.sealEnrollment,
+            RecoveryAction.submitEnrollment,
+          ],
+        ))
+          _enrollSection(m),
+        if (rel(
+          {RecoveryStage.enrollmentConfirmed, RecoveryStage.trusted},
+          [
+            RecoveryAction.verifyDevice,
+            RecoveryAction.restoreDevice,
+            RecoveryAction.pullDevice,
+          ],
+        ))
+          HSection(
+            title: '完成恢复',
+            form: true,
+            children: [
+              if (!m.trustedDevice)
+                HNotice('验证本设备后，即可访问已授权的环境。', icon: Icons.info_outline),
+              _act(
+                m,
+                RecoveryAction.verifyDevice,
+                '验证本设备',
+                _c.verifyRecoveredDevice,
+                primary: true,
+              ),
+              _act(
+                m,
+                RecoveryAction.restoreDevice,
+                '恢复本机数据',
+                _c.restoreRecoveredDevice,
+              ),
+              _act(
+                m,
+                RecoveryAction.pullDevice,
+                '拉取最新数据',
+                _c.pullRecoveredDevice,
+              ),
+            ],
+          ),
+        if ([
+          RecoveryAction.cancelLocal,
+          RecoveryAction.closeOriginal,
+          RecoveryAction.queryClosure,
+          RecoveryAction.restartAfterClosure,
+        ].any(m.allows))
+          _stopSection(m, codeReady, needCode),
+      ],
+    );
   }
 
   Widget _statusSection(RecoveryPresentation m) {
     final (title, body) = _stageText[m.stage]!;
-    return HSection(title: '当前阶段', children: [
-      HNotice(body, title: title, tone: _stageTone(m)),
-      _gap(Text(m.status)),
-      if (m.busy) _gap(const LinearProgressIndicator()),
-      if (m.error != null) _gap(HNotice(m.error!, title: '错误', tone: HTone.danger)),
-      if (_localError != null) _gap(HNotice(_localError!, tone: HTone.warning)),
-      if (m.needsOriginalOwner && !m.ownerAvailable)
-        _gap(HNotice(
-          '该步骤需要最初发起恢复的本机过程，但它已不可用，流程因此中断。不会尝试重新打开旧过程；原操作仍保留，可在允许时用当前完整恢复码查询。',
-          title: '原恢复过程不可用',
-          tone: HTone.warning,
-        )),
-      if (m.operationId != null) _operation(m),
-      if (m.trustedDevice) _gap(HNotice('本设备已通过验证。', tone: HTone.success)),
-      _act(m, RecoveryAction.inspect, '检查恢复状态', _c.inspectRecovery),
-    ]);
+    return HSection(
+      form: true,
+      children: [
+        HNotice(body, title: title, tone: _stageTone(m)),
+        if (m.busy) _gap(const LinearProgressIndicator()),
+        if (m.error != null)
+          _gap(HNotice(m.error!, title: '错误', tone: HTone.danger)),
+        if (_localError != null)
+          _gap(HNotice(_localError!, tone: HTone.warning)),
+        if (m.needsOriginalOwner && !m.ownerAvailable)
+          _gap(
+            HNotice(
+              '恢复已中断。请使用当前恢复码查询上次操作的结果。',
+              title: '需要继续恢复',
+              tone: HTone.warning,
+            ),
+          ),
+        if (m.operationId != null) _operation(m),
+        if (m.trustedDevice) _gap(HNotice('本设备已通过验证。', tone: HTone.success)),
+        if (m.allows(RecoveryAction.inspect))
+          _act(m, RecoveryAction.inspect, '刷新恢复状态', _c.inspectRecovery),
+      ],
+    );
   }
 
   Widget _operation(RecoveryPresentation m) {
@@ -371,25 +527,12 @@ class _RecoveryPanelState extends State<RecoveryPanel> {
       RecoveryStage.enrollmentConfirmed,
       RecoveryStage.trusted,
     }.contains(m.stage);
-    final unknown = !confirmedStage &&
+    final unknown =
+        !confirmedStage &&
         m.observation == 'unknown' &&
         m.confirmation != 'original-verified-and-saved';
-    final details = <Widget>[
-      SelectableText('操作 ID：${m.operationId}'),
-      Text('观察结果：${m.observation}'),
-      Text('确认状态：${m.confirmation}'),
-      if (m.acceptedSequence != null) Text('已接受序号：${m.acceptedSequence}'),
-      if (m.preparationPhase != null) Text('准备阶段：${m.preparationPhase}'),
-    ];
-    if (!unknown) return _gap(Text('原操作确认状态：${m.confirmation}'));
-    return _gap(ExpansionTile(
-      tilePadding: EdgeInsets.zero,
-      childrenPadding: const EdgeInsets.only(bottom: 8),
-      expandedCrossAxisAlignment: CrossAxisAlignment.start,
-      title: const Text('原操作结果未知'),
-      subtitle: const Text('不要假定已提交或未提交。可展开查看原操作，并用当前完整恢复码查询。'),
-      children: details,
-    ));
+    if (!unknown) return const SizedBox.shrink();
+    return _gap(const HHint('上次操作的结果尚未确认，请先查询结果，不要重复提交。'));
   }
 
   Widget _newCodeSection(RecoveryPresentation m) {
@@ -397,156 +540,260 @@ class _RecoveryPanelState extends State<RecoveryPanel> {
     Widget? display;
     if (m.newCodeVisible) {
       final code = _c.recoveryCodeForDisplay;
-      display = _gap(Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          border: Border.all(color: theme.colorScheme.outline),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Text(
-          code ?? '新恢复码当前不可显示。',
-          style: code == null ? null : theme.textTheme.titleMedium?.copyWith(letterSpacing: 1.5),
-        ),
-      ));
-    }
-    return HSection(title: '新恢复码', form: true, children: [
-      HNotice('新恢复码只生成一次。请离线抄写，不要截图或复制；之后需完整重新输入一遍。',
-          tone: HTone.warning, icon: Icons.warning_amber_outlined),
-      _act(m, RecoveryAction.prepareCode, '生成新恢复码', _c.prepareRecoveryCode),
-      if (m.newCodeAvailable)
-        _gap(Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: _pending ? null : () => _c.setRecoveryCodeVisible(!m.newCodeVisible),
-            icon: Icon(m.newCodeVisible ? Icons.visibility_off_outlined : Icons.visibility_outlined),
-            label: Text(m.newCodeVisible ? '隐藏新恢复码' : '显示新恢复码'),
+      display = _gap(
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            border: Border.all(color: theme.colorScheme.outline),
+            borderRadius: BorderRadius.circular(8),
           ),
-        )),
-      ?display,
-      _field(_reentry, '完整重新输入新恢复码', helper: '不会自动填充；请对照抄写内容完整输入。'),
-      _act(m, RecoveryAction.sealTransition, '确认新恢复码', _sealTransition,
-          ready: _reentry.text.isNotEmpty, need: '请完整重新输入新恢复码。'),
-      _act(m, RecoveryAction.submitTransition, '提交恢复码轮换', _c.submitRecoveryTransition, primary: true),
-    ]);
+          child: Text(
+            code ?? '新恢复码当前不可显示。',
+            style: code == null
+                ? null
+                : theme.textTheme.titleMedium?.copyWith(letterSpacing: 1.5),
+          ),
+        ),
+      );
+    }
+    return HSection(
+      title: '新恢复码',
+      form: true,
+      children: [
+        HNotice(
+          '新恢复码只生成一次。请离线抄写，不要截图或复制；之后需完整重新输入一遍。',
+          tone: HTone.warning,
+          icon: Icons.warning_amber_outlined,
+        ),
+        _act(m, RecoveryAction.prepareCode, '生成新恢复码', _c.prepareRecoveryCode),
+        if (m.newCodeAvailable)
+          _gap(
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _pending
+                    ? null
+                    : () => _c.setRecoveryCodeVisible(!m.newCodeVisible),
+                icon: Icon(
+                  m.newCodeVisible
+                      ? Icons.visibility_off_outlined
+                      : Icons.visibility_outlined,
+                ),
+                label: Text(m.newCodeVisible ? '隐藏新恢复码' : '显示新恢复码'),
+              ),
+            ),
+          ),
+        ?display,
+        _field(_reentry, '完整重新输入新恢复码', helper: '不会自动填充；请对照抄写内容完整输入。'),
+        _act(
+          m,
+          RecoveryAction.sealTransition,
+          '确认新恢复码',
+          _sealTransition,
+          ready: _reentry.text.isNotEmpty,
+          need: '请完整重新输入新恢复码。',
+        ),
+        _act(
+          m,
+          RecoveryAction.submitTransition,
+          '提交恢复码轮换',
+          _c.submitRecoveryTransition,
+          primary: true,
+        ),
+      ],
+    );
   }
 
   Widget _enrollSection(RecoveryPresentation m) {
     final selected = _selected(m);
     final count = selected.length;
-    return HSection(title: '授权环境', children: [
-      _act(m, RecoveryAction.loadChoices, '加载可授权环境', _c.loadRecoveryChoices),
-      if (m.choices.isEmpty)
-        _gap(const Text('尚未加载环境列表。'))
-      else ...[
-        _gap(Text('已选 $count / $_maxSelections。每一项都需明确选择角色与期限。')),
-        for (final ch in m.choices) _choiceRow(ch, count),
-        if (count > 0)
-          _gap(HNotice(
-            [
-              for (final (ch, p) in selected)
-                '${ch.environmentId}（密钥版本 ${ch.keyVersion}）：'
-                    '${p.role?.label ?? '未选角色'}，${p.term?.label ?? '未选期限'}',
-            ].join('\n'),
-            title: '本次选择摘要',
-          )),
+    return HSection(
+      title: '授权环境',
+      form: true,
+      children: [
+        _act(m, RecoveryAction.loadChoices, '加载可授权环境', _c.loadRecoveryChoices),
+        if (m.choices.isEmpty)
+          _gap(const Text('尚未加载环境列表。'))
+        else ...[
+          _gap(Text('已选 $count / $_maxSelections。每一项都需明确选择角色与期限。')),
+          for (final ch in m.choices) _choiceRow(ch, count),
+          if (count > 0)
+            _gap(
+              HNotice(
+                [
+                  for (final (ch, p) in selected)
+                    '${ch.environmentId}（密钥版本 ${ch.keyVersion}）：'
+                        '${p.role?.label ?? '未选角色'}，${p.term?.label ?? '未选期限'}',
+                ].join('\n'),
+                title: '本次选择摘要',
+              ),
+            ),
+        ],
+        _act(
+          m,
+          RecoveryAction.sealEnrollment,
+          '确认授权选择',
+          _sealEnrollment,
+          ready: _selectionComplete(m),
+          need: '请勾选 1–$_maxSelections 个环境，并为每项选择角色和期限。',
+        ),
+        _act(
+          m,
+          RecoveryAction.submitEnrollment,
+          '提交登记',
+          _c.submitRecoveryEnrollment,
+          primary: true,
+        ),
       ],
-      _act(m, RecoveryAction.sealEnrollment, '确认授权选择', _sealEnrollment,
-          ready: _selectionComplete(m), need: '请勾选 1–$_maxSelections 个环境，并为每项选择角色和期限。'),
-      _act(m, RecoveryAction.submitEnrollment, '提交登记', _c.submitRecoveryEnrollment, primary: true),
-    ]);
+    );
   }
 
   Widget _choiceRow(RecoveryEnvironmentChoice ch, int count) {
     final p = _picks.putIfAbsent(_key(ch), _Pick.new);
     final canCheck = !_pending && (p.on || count < _maxSelections);
     final theme = Theme.of(context);
-    return _gap(DecoratedBox(
-      decoration: BoxDecoration(
-        border: Border.all(color: theme.colorScheme.outlineVariant),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(4, 0, 12, 8),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          CheckboxListTile(
-            contentPadding: EdgeInsets.zero,
-            controlAffinity: ListTileControlAffinity.leading,
-            value: p.on,
-            onChanged: canCheck
-                ? (v) => setState(() {
-                      p.on = v ?? false;
-                      if (!p.on) {
-                        p.role = null;
-                        p.term = null;
-                      }
-                    })
-                : null,
-            title: Text(ch.environmentId),
-            subtitle: Text('密钥版本 ${ch.keyVersion}'),
+    return _gap(
+      DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border.all(color: theme.colorScheme.outlineVariant),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(4, 0, 12, 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
+                value: p.on,
+                onChanged: canCheck
+                    ? (v) => setState(() {
+                        p.on = v ?? false;
+                        if (!p.on) {
+                          p.role = null;
+                          p.term = null;
+                        }
+                      })
+                    : null,
+                title: Text(ch.environmentId),
+                subtitle: Text('密钥版本 ${ch.keyVersion}'),
+              ),
+              if (p.on) ...[
+                Padding(
+                  padding: const EdgeInsets.only(left: 12),
+                  child: Text('角色', style: theme.textTheme.labelLarge),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(left: 12, top: 4),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    children: [
+                      for (final r in RecoveryRole.values)
+                        ChoiceChip(
+                          label: Text(r.label),
+                          selected: p.role == r,
+                          onSelected: _pending
+                              ? null
+                              : (s) => setState(() => p.role = s ? r : null),
+                        ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(left: 12, top: 8),
+                  child: Text(
+                    '期限（从确认选择时起算）',
+                    style: theme.textTheme.labelLarge,
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(left: 12, top: 4),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    children: [
+                      for (final t in _Term.values)
+                        ChoiceChip(
+                          label: Text(t.label),
+                          selected: p.term == t,
+                          onSelected: _pending
+                              ? null
+                              : (s) => setState(() => p.term = s ? t : null),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
           ),
-          if (p.on) ...[
-            Padding(
-              padding: const EdgeInsets.only(left: 12),
-              child: Text('角色', style: theme.textTheme.labelLarge),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(left: 12, top: 4),
-              child: Wrap(spacing: 8, runSpacing: 4, children: [
-                for (final r in RecoveryRole.values)
-                  ChoiceChip(
-                    label: Text(r.label),
-                    selected: p.role == r,
-                    onSelected: _pending ? null : (s) => setState(() => p.role = s ? r : null),
-                  ),
-              ]),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(left: 12, top: 8),
-              child: Text('期限（从确认选择时起算）', style: theme.textTheme.labelLarge),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(left: 12, top: 4),
-              child: Wrap(spacing: 8, runSpacing: 4, children: [
-                for (final t in _Term.values)
-                  ChoiceChip(
-                    label: Text(t.label),
-                    selected: p.term == t,
-                    onSelected: _pending ? null : (s) => setState(() => p.term = s ? t : null),
-                  ),
-              ]),
-            ),
-          ],
-        ]),
+        ),
       ),
-    ));
+    );
   }
 
   Widget _stopSection(RecoveryPresentation m, bool codeReady, String needCode) {
     final closeAllowed = m.allows(RecoveryAction.closeOriginal);
-    return HSection(title: '停止恢复', children: [
-      HNotice('只关闭本机内存中的恢复过程，服务器上的原操作保持不变，之后仍可用当前完整恢复码查询。',
-          title: '关闭本机恢复过程'),
-      _act(m, RecoveryAction.cancelLocal, '关闭本机恢复过程（保留原操作）', _c.cancelRecoveryLocally),
-      _gap(const Divider()),
-      HNotice('在服务器上关闭旧恢复分支，关闭后该分支不能继续。需要单独确认并使用上方的当前完整恢复码。',
-          title: '关闭服务器上的旧恢复分支', tone: HTone.danger),
-      _gap(CheckboxListTile(
-        contentPadding: EdgeInsets.zero,
-        controlAffinity: ListTileControlAffinity.leading,
-        value: _closeAck,
-        onChanged: closeAllowed && !_pending ? (v) => setState(() => _closeAck = v ?? false) : null,
-        title: const Text('我确认关闭服务器上的旧恢复分支。这不同于只关闭本机恢复过程，且不能撤销。'),
-      )),
-      _act(m, RecoveryAction.closeOriginal, '关闭服务器上的旧恢复分支', _closeOriginal,
-          danger: true,
-          ready: _closeAck && codeReady,
-          need: '请勾选上方确认，并完整输入当前恢复码。'),
-      _act(m, RecoveryAction.queryClosure, '查询关闭结果',
-          _withCode(_current, _c.queryRecoveryClosure),
-          ready: codeReady, need: needCode),
-      _act(m, RecoveryAction.restartAfterClosure, '关闭后重新开始恢复',
-          _withCode(_current, _c.restartRecoveryAfterClosure),
-          ready: codeReady, need: needCode),
-    ]);
+    return HSection(
+      title: '停止恢复',
+      form: true,
+      children: [
+        if (m.allows(RecoveryAction.cancelLocal)) ...[
+          const HHint('退出本次恢复，已提交的操作仍可继续查询。'),
+          _act(
+            m,
+            RecoveryAction.cancelLocal,
+            '暂时退出恢复',
+            _c.cancelRecoveryLocally,
+          ),
+        ],
+        if (closeAllowed) ...[
+          const HNotice(
+            '关闭后无法继续此恢复操作，且不能撤销。',
+            title: '结束上次恢复',
+            tone: HTone.danger,
+          ),
+          _gap(
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+              value: _closeAck,
+              onChanged: closeAllowed && !_pending
+                  ? (v) => setState(() => _closeAck = v ?? false)
+                  : null,
+              title: const Text('我确认结束此恢复操作'),
+            ),
+          ),
+          _act(
+            m,
+            RecoveryAction.closeOriginal,
+            '结束上次恢复',
+            _closeOriginal,
+            danger: true,
+            ready: _closeAck && codeReady,
+            need: '请确认并输入当前恢复码。',
+          ),
+        ],
+        if (m.allows(RecoveryAction.queryClosure))
+          _act(
+            m,
+            RecoveryAction.queryClosure,
+            '查询关闭结果',
+            _withCode(_current, _c.queryRecoveryClosure),
+            ready: codeReady,
+            need: needCode,
+          ),
+        if (m.allows(RecoveryAction.restartAfterClosure))
+          _act(
+            m,
+            RecoveryAction.restartAfterClosure,
+            '重新开始恢复',
+            _withCode(_current, _c.restartRecoveryAfterClosure),
+            ready: codeReady,
+            need: needCode,
+          ),
+      ],
+    );
   }
 }

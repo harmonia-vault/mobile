@@ -16,9 +16,20 @@ class AccountResetFailure implements Exception {
     AccountResetFailureCode.queryRequired => '必须先查询原邮件证明；不能替换原请求。',
     AccountResetFailureCode.nativeRejected => '原生未确认重置结果；请查询原请求。',
     AccountResetFailureCode.localCleanupUnconfirmed => '本机清理未确认，不能报告完成或开启新流程。',
+    AccountResetFailureCode.codeInvalid => '验证码不正确，请重新输入。最多可尝试 5 次。',
+    AccountResetFailureCode.codeExpired => '验证码已过期，请重新发送。',
+    AccountResetFailureCode.codeExhausted => '已达到 5 次尝试上限，请重新发送验证码。',
   };
   @override
   String toString() => 'AccountResetFailure(${code.name})';
+}
+
+class AccountResetEmailRateLimitFailure extends AccountResetFailure {
+  const AccountResetEmailRateLimitFailure(this.retryAfterSeconds)
+    : super(AccountResetFailureCode.busy);
+  final int retryAfterSeconds;
+  @override
+  String get message => '请求过于频繁，请 $retryAfterSeconds 秒后重试。';
 }
 
 enum AccountResetFailureCode {
@@ -30,6 +41,9 @@ enum AccountResetFailureCode {
   queryRequired,
   nativeRejected,
   localCleanupUnconfirmed,
+  codeInvalid,
+  codeExpired,
+  codeExhausted,
 }
 
 /// 当前已知 tuple 只是额外显示门；真正槽匹配仍由原生AEAD来源核验。
@@ -89,7 +103,7 @@ class AccountResetOutcome {
 abstract interface class AccountResetGateway {
   Set<AccountResetAction> get supportedActions;
 
-  /// 申请邮件原生入口尚缺；现adapter始终关闭，不能从Dart直接HTTP。
+  /// 通过平台原生入口申请邮件；Dart 不直接持有 HTTP 账号凭证。
   Future<void> requestEmailProof(String endpoint, String email);
   Future<AccountResetOutcome> beginFresh(String endpoint, Uint8List proof);
   Future<AccountResetOutcome> beginQueryOnly(String endpoint, Uint8List proof);

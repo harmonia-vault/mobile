@@ -35,7 +35,7 @@ internal class ProtectedWorkflowStore(
         loadRaw().also { expected = it.copyOf() }
     }
     private fun validate(packet: ByteArray) {
-        check(packet.size in 40..maxBytes && String(packet, 0, 8, Charsets.US_ASCII) == "HARMST01")
+        check(packet.size in 40..maxBytes && String(packet, 0, 8, Charsets.US_ASCII) == "HARMST02")
     }
     private fun checkExpected(caller: ByteArray? = null, compareCaller: Boolean = false) {
         val captured = expected ?: error("state not captured")

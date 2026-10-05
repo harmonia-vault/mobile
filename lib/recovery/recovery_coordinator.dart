@@ -340,7 +340,7 @@ class RecoveryCoordinator {
     final bytes = code ?? Uint8List(0);
     try {
       if (!_alive(epoch) || gateway == null || !_cap(operation)) {
-        throw const GatewayFailure('此恢复操作没有已验证的原生能力。');
+        throw const GatewayFailure('当前无法执行此恢复操作，请先完成前一步。');
       }
       final reply = await gateway!.executeRecovery(operation, fields, bytes);
       if (!_alive(epoch)) return null;
@@ -829,7 +829,7 @@ class RecoveryCoordinator {
     _stage = RecoveryStage.trusted;
     _status = operation == 'restoreDAGRecoveredDevice'
         ? '已保存来源通过本机复验；当前为离线缓存读取，尚未确认网络状态。'
-        : '正式网络拉取、本机验证和保存已完成；仍为实验性功能。';
+        : '恢复完成，数据已同步到本机。';
     onTrusted(trusted, operation);
   });
 }

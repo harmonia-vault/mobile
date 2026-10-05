@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 
-/// 显式证书版本与来源证明业务切片，不替换默认关闭gateway或启动UI。
+/// 设备授权、同步和管理使用同一 DAG 来源验证。
 /// 每次调用原生重新系统认证；状态、私钥、随机session不进入Dart。
 class NativeWorkflowAdapter {
   const NativeWorkflowAdapter(this.endpoint);
@@ -30,16 +30,16 @@ class NativeWorkflowAdapter {
 
   Future<Map<String, Object?>> register(String email, String password) =>
       _execute('register', {'email': email, 'password': password});
+  Future<Map<String, Object?>> requestVerificationEmail(String email) =>
+      _execute('requestVerificationEmail', {'email': email});
   Future<Map<String, Object?>> verifyEmail({
     required String accountId,
     required String accountGeneration,
-    required String challengeId,
-    required String token,
+    required String code,
   }) => _execute('verifyEmail', {
     'accountId': accountId,
     'accountGeneration': accountGeneration,
-    'challengeId': challengeId,
-    'token': token,
+    'code': code,
   });
 
   /// Login与Begin连续执行。完整恢复码仅本次显示、重输，不持久化。
@@ -98,89 +98,40 @@ class NativeWorkflowAdapter {
     'id': id,
   });
 
-  /// 短码只作为本次调用字节缓冲传给原生SPAKE2，结束清理可控缓冲，不持久化。
-  /// approved只表示管理者批准，complete才表示已验新设备双签完成。
-  Future<Map<String, Object?>> approvePairing({
+  /// 短码只用于本次配对确认，结束后清理可控缓冲。
+  Future<Map<String, Object?>> approvePairingV5({
     required String pairingId,
     required Uint8List shortCode,
     required List<NativeApprovalSelection> selections,
-  }) async {
-    try {
-      return _decode(
-        await _channel.invokeMethod<String>('executeApproval', {
-          'command': jsonEncode({
-            'version': 1,
-            'operation': 'approvePairing',
-            'endpoint': endpoint,
-            'pairingId': pairingId,
-            'selections': jsonEncode(
-              selections.map((s) => s.toJson()).toList(),
-            ),
-          }),
-          'shortCode': shortCode,
-        }),
-      );
-    } finally {
-      shortCode.fillRange(0, shortCode.length, 0);
-    }
-  }
-
-  Future<Map<String, Object?>> retryApproval(String pairingId) =>
-      _execute('retryApproval', {'pairingId': pairingId});
-  Future<Map<String, Object?>> approvalInfo() => _execute('approvalInfo', {});
-  Future<Map<String, Object?>> cancelApproval(String pairingId) =>
-      _execute('cancelApproval', {'pairingId': pairingId});
-
-  /// 显式cert3来源证明，不自动降级到首根v2。
-  Future<Map<String, Object?>> approvePairingV3({
-    required String pairingId,
-    required Uint8List shortCode,
-    required List<NativeApprovalSelection> selections,
-  }) => _executeCode('executeApproval', 'approvePairingV3', shortCode, {
+  }) => _executeCode('executeApproval', 'approvePairingV5', shortCode, {
     'pairingId': pairingId,
     'selections': jsonEncode(selections.map((s) => s.toJson()).toList()),
   });
-  Future<Map<String, Object?>> retryApprovalV3(String pairingId) =>
-      _execute('retryApprovalV3', {'pairingId': pairingId});
-  Future<Map<String, Object?>> approvalInfoV3() =>
-      _execute('approvalInfoV3', {});
-  Future<Map<String, Object?>> cancelApprovalV3(String pairingId) =>
-      _execute('cancelApprovalV3', {'pairingId': pairingId});
-
-  /// 显式cert4连续恢复证明；目前仅已正式登记的恢复设备E可管理，绝不自动降级。
-  Future<Map<String, Object?>> approvePairingV4({
-    required String pairingId,
-    required Uint8List shortCode,
-    required List<NativeApprovalSelection> selections,
-  }) => _executeCode('executeApproval', 'approvePairingV4', shortCode, {
-    'pairingId': pairingId,
-    'selections': jsonEncode(selections.map((s) => s.toJson()).toList()),
-  });
-  Future<Map<String, Object?>> retryApprovalV4(String pairingId) =>
-      _execute('retryApprovalV4', {'pairingId': pairingId});
-  Future<Map<String, Object?>> approvalInfoV4() =>
-      _execute('approvalInfoV4', {});
-  Future<Map<String, Object?>> cancelApprovalV4(String pairingId) =>
-      _execute('cancelApprovalV4', {'pairingId': pairingId});
+  Future<Map<String, Object?>> retryApprovalV5(String pairingId) =>
+      _execute('retryApprovalV5', {'pairingId': pairingId});
+  Future<Map<String, Object?>> approvalInfoV5() =>
+      _execute('approvalInfoV5', {});
+  Future<Map<String, Object?>> cancelApprovalV5(String pairingId) =>
+      _execute('cancelApprovalV5', {'pairingId': pairingId});
 
   /// 登录及完整PAKE同次系统认证。只有已验检查点、来源账本及同步保存
   /// 全部完成才出可信view；pending只能以原pairingId恢复。
-  Future<Map<String, Object?>> enrollDeviceV3({
+  Future<Map<String, Object?>> enrollDeviceV5({
     required String email,
     required String password,
     required String pairingId,
     required String approverDeviceId,
     required Uint8List shortCode,
-  }) => _executeCode('executeEnrollment', 'enrollDeviceV3', shortCode, {
+  }) => _executeCode('executeEnrollment', 'enrollDeviceV5', shortCode, {
     'email': email,
     'password': password,
     'pairingId': pairingId,
     'approverDeviceId': approverDeviceId,
   });
-  Future<Map<String, Object?>> resumeEnrollmentV3(String pairingId) =>
-      _execute('resumeEnrollmentV3', {'pairingId': pairingId});
-  Future<Map<String, Object?>> enrollmentInfoV3() =>
-      _execute('enrollmentInfoV3', {});
+  Future<Map<String, Object?>> resumeEnrollmentV5(String pairingId) =>
+      _execute('resumeEnrollmentV5', {'pairingId': pairingId});
+  Future<Map<String, Object?>> enrollmentInfoV5() =>
+      _execute('enrollmentInfoV5', {});
   Future<Map<String, Object?>> rotateEnvironmentKey(
     String environmentId,
     String id,
@@ -245,44 +196,6 @@ class NativeWorkflowAdapter {
       _execute('retryManagement', {'id': id});
   Future<Map<String, Object?>> cancelManagement(String id) =>
       _execute('cancelManagement', {'id': id});
-
-  /// 连续恢复仅typed authority；旧Ed owner/handle只在Go进程，不出Dart。
-  /// Login与旧完整码证明同次系统认证；恢复成功仍restricted。
-  Future<Map<String, Object?>> beginRecoveryAuthority({
-    required String email,
-    required String password,
-    required String recoveryCode,
-  }) => _execute('beginRecoveryAuthority', {
-    'email': email,
-    'password': password,
-    'recoveryCode': recoveryCode,
-  });
-
-  /// 仅中断/进程死亡后完整有效码恢复原sealed上下文，不替换id或nonce。
-  Future<Map<String, Object?>> resumeRecoveryAuthority(String recoveryCode) =>
-      _execute('resumeRecoveryAuthority', {'recoveryCode': recoveryCode});
-  Future<Map<String, Object?>> recoveryInfo() => _execute('recoveryInfo', {});
-  Future<Map<String, Object?>> recoveryView() => _execute('recoveryView', {});
-  Future<Map<String, Object?>> beginRecoveryTransition(String id) =>
-      _execute('beginRecoveryTransition', {'id': id});
-  Future<Map<String, Object?>> completeRecoveryTransition(
-    String recoveryCode,
-  ) => _execute('completeRecoveryTransition', {'recoveryCode': recoveryCode});
-  Future<Map<String, Object?>> queryRecoveryTransition() =>
-      _execute('queryRecoveryTransition', {});
-
-  /// 显式selected环境/权限/期限。轮换成功不自动登记，不自动Admin。
-  Future<Map<String, Object?>> registerRecoveredDevice(
-    String id,
-    List<NativeApprovalSelection> selections,
-  ) => _execute('registerRecoveredDevice', {
-    'id': id,
-    'selections': jsonEncode(selections.map((s) => s.toJson()).toList()),
-  });
-  Future<Map<String, Object?>> retryRecoveredDevice(String id) =>
-      _execute('retryRecoveredDevice', {'id': id});
-  Future<Map<String, Object?>> recoveredDeviceInfo() =>
-      _execute('recoveredDeviceInfo', {});
 
   Future<Map<String, Object?>> selfRevocationInfo() =>
       _execute('selfRevocationInfo', {});

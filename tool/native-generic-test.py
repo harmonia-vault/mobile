@@ -47,7 +47,7 @@ try:
    stage=line.split('AWAIT_LOCAL_PAIRING_SOCKET:',1)[1];print('local compiled CLI stage:',stage,flush=True)
    controller=workspace/'core-go/.build/mobilebridge/crosscontroller'
    cli=workspace/'core-go/.build/mobilebridge/crossfixture-harmonia'
-   command=[str(controller),'--native-ready','--cli',str(cli),'--endpoint','https://127.0.0.1:4443','--ca-file',str(mobile/'build/native/generic-fixture/ca.pem'),'--port',port,'--certificate-version','3']
+   command=[str(controller),'--native-ready','--cli',str(cli),'--endpoint','https://127.0.0.1:4443','--ca-file',str(mobile/'build/native/generic-fixture/ca.pem'),'--port',port]
    if 'save-failure' in stage:command+=['--expect-rejected']
    process=subprocess.Popen(command,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
    process.stdin.write(b'synthetic-cross-password-only\n');process.stdin.close()

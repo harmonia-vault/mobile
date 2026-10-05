@@ -1,3 +1,5 @@
+import "../email_code.dart";
+
 import 'dart:typed_data';
 import 'dart:convert';
 
@@ -26,7 +28,8 @@ class AccountResetCoordinator implements AccountResetActions {
       _queried = false,
       _cleanupConfirmed = false;
   AccountResetOutcome? _outcome;
-  String? _originalGeneration, _error;
+  String? _originalGeneration, _error, _requestedEmail;
+  DateTime? _emailRetryAt;
   AccountResetStage _stage = AccountResetStage.entry;
   bool _cap(AccountResetAction a) => gateway.supportedActions.contains(a);
   bool get _alive => !_retired && !_disposed && _foreground;
@@ -47,7 +50,7 @@ class AccountResetCoordinator implements AccountResetActions {
       }
     }
 
-    permit(AccountResetAction.requestEmail, !_owner && !_emailRequested);
+    permit(AccountResetAction.requestEmail, !_owner);
     permit(AccountResetAction.beginFresh, !_owner && _emailRequested);
     permit(AccountResetAction.beginQueryOnly, !_owner && !_emailRequested);
     permit(AccountResetAction.query, _owner && !_cleanupConfirmed);
@@ -80,17 +83,18 @@ class AccountResetCoordinator implements AccountResetActions {
       queryOnly: _cold,
       localCleanupConfirmed: _cleanupConfirmed,
       error: _error,
+      emailRetryAt: _emailRetryAt,
       actions: actions,
     );
   }
 
   String get _status => switch (_stage) {
-    AccountResetStage.unavailable => '账号重置原生接口尚未验收。',
+    AccountResetStage.unavailable => '当前无法使用邮箱重置，请联系服务管理员。',
     AccountResetStage.entry =>
       gateway.supportedActions.isEmpty
-          ? '账号重置原生接口尚未验收。'
-          : '新流程须先申请邮件证明；冷续办只能查询。',
-    AccountResetStage.awaitingProof => '请使用本次新申请邮件中的完整证明。',
+          ? '当前无法使用邮箱重置，请联系服务管理员。'
+          : '发送重置邮件后，按邮件提示继续。',
+    AccountResetStage.awaitingProof => '请输入邮件中的八位字母数字验证码。',
     AccountResetStage.proofPending =>
       _cold ? '原证明尚未完成；冷查询不能创建或重试提交。' : '邮件证明有效；重置会删除旧保险库，不能恢复旧数据。',
     AccountResetStage.prepared => '已冻结本次原请求；后续不能替换密码或证明。',
@@ -124,10 +128,19 @@ class AccountResetCoordinator implements AccountResetActions {
       _postCheck(epoch);
       if (_alive && epoch == _epoch) {
         _error = e.message;
+        if (e.code == AccountResetFailureCode.codeInvalid ||
+            e.code == AccountResetFailureCode.codeExpired ||
+            e.code == AccountResetFailureCode.codeExhausted) {
+          _owner = false;
+        }
         _queried = false;
-        _stage = _owner
-            ? AccountResetStage.unknown
-            : AccountResetStage.interrupted;
+        if (_owner) {
+          _stage = AccountResetStage.unknown;
+        } else if (_emailRequested) {
+          _stage = AccountResetStage.awaitingProof;
+        } else {
+          _stage = AccountResetStage.entry;
+        }
       }
       rethrow;
     } catch (_) {
@@ -183,8 +196,23 @@ class AccountResetCoordinator implements AccountResetActions {
           throw const AccountResetFailure(AccountResetFailureCode.invalidInput);
         }
         final epoch = _epoch;
-        await gateway.requestEmailProof(scope.endpoint, email);
+        final wait =
+            _emailRetryAt?.difference(DateTime.now()).inMilliseconds ?? 0;
+        if (wait > 0) {
+          throw AccountResetEmailRateLimitFailure((wait / 1000).ceil());
+        }
+        try {
+          await gateway.requestEmailProof(scope.endpoint, email);
+        } on AccountResetEmailRateLimitFailure catch (failure) {
+          _postCheck(epoch);
+          _emailRetryAt = DateTime.now().add(
+            Duration(seconds: failure.retryAfterSeconds),
+          );
+          rethrow;
+        }
         _postCheck(epoch);
+        _emailRetryAt = DateTime.now().add(const Duration(seconds: 60));
+        _requestedEmail = email;
         _emailRequested = true;
         _stage = AccountResetStage.awaitingProof;
       });
@@ -199,6 +227,19 @@ class AccountResetCoordinator implements AccountResetActions {
             throw const AccountResetFailure(
               AccountResetFailureCode.invalidInput,
             );
+          }
+          if (!cold) {
+            final code = normalizeEmailCode(utf8.decode(proof));
+            if (_requestedEmail == null || code == null) {
+              throw const AccountResetFailure(
+                AccountResetFailureCode.invalidInput,
+              );
+            }
+            final payload = utf8.encode(
+              jsonEncode({'email': _requestedEmail, 'code': code}),
+            );
+            proof.fillRange(0, proof.length, 0);
+            proof = payload;
           }
           final epoch = _epoch;
           _owner = true;
@@ -279,6 +320,7 @@ class AccountResetCoordinator implements AccountResetActions {
     _attemptReady = false;
     _busy = false;
     _emailRequested = false;
+    _requestedEmail = null;
     _cleanupConfirmed = false;
     _stage = AccountResetStage.interrupted;
     if (!_disposed) {

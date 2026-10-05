@@ -77,17 +77,17 @@ class NativeManagementIntegrationTest {
         val activity=instrumentation.startActivitySync(Intent(context,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         val store=ProtectedDeviceStore(context,alias,keyFilename);assertTrue(store.supported())
         lateinit var plugin:NativeBridgePlugin
-        fun connect(){instrumentation.runOnMainSync{plugin=NativeBridgePlugin(activity,messenger,store,stateFilename,ca){check(saves.incrementAndGet()!=failAt)}}}
+        fun connect(){instrumentation.runOnMainSync{plugin=NativeBridgePlugin(activity,messenger,store,stateFilename,ca,beforeWorkflowSave={check(saves.incrementAndGet()!=failAt)})}}
         fun execute(op:String,fields:Map<String,String> = emptyMap())=request(plugin,"executeWorkflow",command(op,fields),op)
         fun hidden(){val out=execute("view");assertFalse(out.getBoolean("ok"));assertFalse(out.has("data"));assertEquals("PENDING",out.getString("code"))}
         connect()
         try {
             val device=request(plugin,"createDevice",null,"createDevice").getString("deviceId")
             val email="native-management-${System.currentTimeMillis()}@example.invalid";val password="synthetic-cross-password-only"
-            assertTrue(execute("register",mapOf("email" to email,"password" to password)).getBoolean("ok"))
+            val registered=execute("register",mapOf("email" to email,"password" to password));assertTrue(registered.getBoolean("ok"));val registration=registered.getJSONObject("data")
             val mails=JSONArray(https("/test/emails"));var proof:JSONObject?=null
-            for(i in 0 until mails.length()){val mail=mails.getJSONObject(i);if(mail.getString("to")==email)for(line in mail.getString("text").split('\n'))if(line.startsWith("{"))proof=JSONObject(line)}
-            assertNotNull(proof);assertTrue(execute("verifyEmail",listOf("accountId","accountGeneration","challengeId","token").associateWith{proof!!.getString(it)}).getBoolean("ok"))
+            for(i in 0 until mails.length()){val mail=mails.getJSONObject(i);if(mail.getString("to")==email)for(line in mail.getString("text").split('\n'))if(Regex("^[2-9A-HJ-NP-Z]{8}$").matches(line))proof=JSONObject().put("accountId",registration.getString("accountId")).put("accountGeneration",registration.getString("accountGeneration")).put("code",line)}
+            assertNotNull(proof);assertTrue(execute("verifyEmail",listOf("accountId","accountGeneration","code").associateWith{proof!!.getString(it)}).getBoolean("ok"))
             val began=execute("beginInitialization",mapOf("email" to email,"password" to password,"name" to "管理合成环境","id" to "native-management-root"));assertTrue(began.getBoolean("ok"))
             val view=execute("completeInitialization",mapOf("recoveryCode" to began.getString("recoveryCode"))).getJSONObject("data")
             val env=view.getJSONArray("environments").getJSONObject(0).getString("id")
@@ -101,11 +101,11 @@ class NativeManagementIntegrationTest {
                     assertEquals(env,packet.environment)
                     val choices=JSONArray().put(JSONObject().put("environmentId",env).put("role","rw").put("expiresAt",packet.expiry.toString()))
                     val incoming=packet.shortCode.copyOf()
-                    val approved=request(plugin,"executeApproval",mapOf("command" to command("approvePairingV3",mapOf("pairingId" to packet.pairingId,"selections" to choices.toString())),"shortCode" to incoming),"approve-management-peer")
+                    val approved=request(plugin,"executeApproval",mapOf("command" to command("approvePairingV5",mapOf("pairingId" to packet.pairingId,"selections" to choices.toString())),"shortCode" to incoming),"approve-management-peer")
                     packet.shortCode.fill(0);assertTrue(incoming.all{it==0.toByte()});assertTrue(approved.getBoolean("ok"))
                     subject=approved.getJSONObject("data").getString("deviceId");assertNotEquals(device,subject)
                     packet.acknowledge("APPROVED");socket.awaitVerifiedPeerStage()
-                    assertTrue(execute("retryApprovalV3",mapOf("pairingId" to packet.pairingId)).getBoolean("ok"))
+                    assertTrue(execute("retryApprovalV5",mapOf("pairingId" to packet.pairingId)).getBoolean("ok"))
                 }
                 socket.control().use {control ->
                     fun grant(id:String,role:String)=execute("prepareDeviceGrant",mapOf("environmentId" to env,"subjectDeviceId" to subject,"role" to role,"expiresAt" to if(role=="none")"0" else expiry,"id" to id))

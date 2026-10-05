@@ -180,7 +180,9 @@ class HNavBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = Theme.of(context).colorScheme;
     final label = Theme.of(context).textTheme.labelMedium;
-    final shape = RoundedRectangleBorder(borderRadius: BorderRadius.circular(16));
+    final shape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(16),
+    );
     return Material(
       color: s.surfaceContainer,
       child: SafeArea(
@@ -521,7 +523,9 @@ class HPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, box) {
-      final side = box.maxWidth < HSize.compact ? HSpace.lg + HSpace.xxs : HSpace.xl;
+      final side = box.maxWidth < HSize.compact
+          ? HSpace.lg + HSpace.xxs
+          : HSpace.xl;
       final width = narrow ? HSize.formWidth : HSize.pageWidth;
       return Align(
         alignment: Alignment.topCenter,
@@ -533,6 +537,55 @@ class HPage extends StatelessWidget {
             itemCount: children.length,
             separatorBuilder: (_, _) => const SizedBox(height: HSpace.md),
             itemBuilder: (_, i) => children[i],
+          ),
+        ),
+      );
+    },
+  );
+}
+
+/// 登录与注册：服务器地址置顶，表单整体居中；空间不足时自然滚动。
+class HAuthPage extends StatelessWidget {
+  const HAuthPage({super.key, required this.header, required this.children});
+
+  final Widget header;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, box) {
+      final side = box.maxWidth < HSize.compact
+          ? HSpace.lg + HSpace.xxs
+          : HSpace.xl;
+      return Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: HSize.formWidth + side * 2),
+          child: CustomScrollView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            slivers: [
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(side, HSpace.sm, side, 0),
+                  child: header,
+                ),
+              ),
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: side,
+                    vertical: HSpace.xl,
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    spacing: HSpace.md,
+                    children: children,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       );
@@ -624,7 +677,11 @@ class HIconTile extends StatelessWidget {
             ? null
             : Border.all(color: line, width: HSize.stroke),
       ),
-      child: Icon(icon, color: fg, size: large ? HSize.icon + 4 : HSize.icon - 2),
+      child: Icon(
+        icon,
+        color: fg,
+        size: large ? HSize.icon + 4 : HSize.icon - 2,
+      ),
     );
   }
 }
@@ -999,7 +1056,12 @@ class HSection extends StatelessWidget {
       children: [
         if (title != null || trailing != null)
           Padding(
-            padding: const EdgeInsets.fromLTRB(HSpace.xs, HSpace.xs, 0, HSpace.sm),
+            padding: const EdgeInsets.fromLTRB(
+              HSpace.xs,
+              HSpace.xs,
+              0,
+              HSpace.sm,
+            ),
             child: Row(
               children: [
                 Expanded(
@@ -1109,9 +1171,7 @@ class HRow extends StatelessWidget {
                     const SizedBox(height: HSpace.xxs),
                     Text(
                       subtitle!,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: muted,
-                      ),
+                      style: theme.textTheme.bodyMedium?.copyWith(color: muted),
                     ),
                   ],
                 ],
@@ -1468,9 +1528,8 @@ class HSecret extends StatelessWidget {
       revealed ? value : '••••••••',
       maxLines: revealed ? 6 : 1,
       overflow: TextOverflow.ellipsis,
-      style: hMono(theme.textTheme.bodyMedium).copyWith(
-        color: theme.colorScheme.onSurfaceVariant,
-      ),
+      style: hMono(theme.textTheme.bodyMedium)
+          .copyWith(color: theme.colorScheme.onSurfaceVariant),
     );
   }
 }

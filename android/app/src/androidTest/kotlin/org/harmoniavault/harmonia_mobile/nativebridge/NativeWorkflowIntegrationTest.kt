@@ -90,7 +90,7 @@ class NativeWorkflowIntegrationTest {
         val store=ProtectedDeviceStore(context,alias,keyFilename)
         assertTrue("synthetic system credential required",store.supported())
         lateinit var plugin:NativeBridgePlugin
-        fun connect(){instrumentation.runOnMainSync{plugin=NativeBridgePlugin(activity,messenger,store,stateFilename,ca){check(!failSave)}}}
+        fun connect(){instrumentation.runOnMainSync{plugin=NativeBridgePlugin(activity,messenger,store,stateFilename,ca,beforeWorkflowSave={check(!failSave)})}}
         fun execute(op:String,fields:Map<String,String> = emptyMap(),phase:String=op)=request(plugin,"executeWorkflow",command(op,fields),phase)
         connect()
         try{
@@ -99,10 +99,10 @@ class NativeWorkflowIntegrationTest {
             val registered=execute("register",mapOf("email" to email,"password" to password));assertTrue(registered.getBoolean("ok"))
             val registration=registered.getJSONObject("data");assertTrue(registration.getBoolean("verificationRequired"))
             val mail=JSONArray(https("/test/emails"));var proof:JSONObject?=null
-            for(i in 0 until mail.length()){val message=mail.getJSONObject(i);if(message.getString("to")==email){for(line in message.getString("text").split('\n')){if(line.startsWith("{"))proof=JSONObject(line)}}}
+            for(i in 0 until mail.length()){val message=mail.getJSONObject(i);if(message.getString("to")==email){for(line in message.getString("text").split('\n')){if(Regex("^[2-9A-HJ-NP-Z]{8}$").matches(line))proof=JSONObject().put("accountId",registration.getString("accountId")).put("accountGeneration",registration.getString("accountGeneration")).put("code",line)}}}
             assertNotNull("synthetic verification proof missing",proof)
             assertEquals(registration.getString("accountId"),proof!!.getString("accountId"))
-            val verified=execute("verifyEmail",listOf("accountId","accountGeneration","challengeId","token").associateWith{proof!!.getString(it)})
+            val verified=execute("verifyEmail",listOf("accountId","accountGeneration","code").associateWith{proof!!.getString(it)})
             assertTrue(verified.getBoolean("ok"))
             val began=execute("beginInitialization",mapOf("email" to email,"password" to password,"name" to "合成初始环境","id" to "android-init"))
             assertTrue(began.getBoolean("ok"));val code=began.getString("recoveryCode");assertEquals(52,code.length)
@@ -191,11 +191,11 @@ class NativeWorkflowIntegrationTest {
         try {
             request(plugin,"createDevice",null,"revoke-create")
             val email="revoke-${System.currentTimeMillis()}@example.invalid";val password="synthetic-revocation-password"
-            assertTrue(execute("register",mapOf("email" to email,"password" to password)).getBoolean("ok"))
+            val registered=execute("register",mapOf("email" to email,"password" to password));assertTrue(registered.getBoolean("ok"));val registration=registered.getJSONObject("data")
             val emails=JSONArray(https("/test/emails"));var proof:JSONObject?=null
-            for(i in 0 until emails.length()){val mail=emails.getJSONObject(i);if(mail.getString("to")==email){for(line in mail.getString("text").split('\n')){if(line.startsWith("{"))proof=JSONObject(line)}}}
+            for(i in 0 until emails.length()){val mail=emails.getJSONObject(i);if(mail.getString("to")==email){for(line in mail.getString("text").split('\n')){if(Regex("^[2-9A-HJ-NP-Z]{8}$").matches(line))proof=JSONObject().put("accountId",registration.getString("accountId")).put("accountGeneration",registration.getString("accountGeneration")).put("code",line)}}}
             assertNotNull(proof)
-            assertTrue(execute("verifyEmail",listOf("accountId","accountGeneration","challengeId","token").associateWith{proof!!.getString(it)}).getBoolean("ok"))
+            assertTrue(execute("verifyEmail",listOf("accountId","accountGeneration","code").associateWith{proof!!.getString(it)}).getBoolean("ok"))
             val began=execute("beginInitialization",mapOf("email" to email,"password" to password,"name" to "撤销合成环境","id" to "native-revoke-init"))
             assertTrue(began.getBoolean("ok"));checkView(execute("completeInitialization",mapOf("recoveryCode" to began.getString("recoveryCode"))))
             val stateFile=File(File(context.noBackupFilesDir,"harmonia"),stateFilename)

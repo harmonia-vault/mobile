@@ -11,7 +11,13 @@ abstract interface class AccountResetGatewayProvider {
 
 /// 同endpoint/原生scope前后门；不持有证明、密码或原请求。
 class ScopedAccountResetGateway implements AccountResetGateway {
-  ScopedAccountResetGateway(this._delegate, this._endpoint, this._isCurrent);
+  ScopedAccountResetGateway(
+    this._delegate,
+    this._endpoint,
+    this._isCurrent, {
+    this.onCompleted,
+  });
+  final void Function()? onCompleted;
   final AccountResetGateway _delegate;
   final String _endpoint;
   final bool Function() _isCurrent;
@@ -82,7 +88,12 @@ class ScopedAccountResetGateway implements AccountResetGateway {
   }
 
   @override
-  Future<AccountResetOutcome> complete() => _run(_delegate.complete);
+  Future<AccountResetOutcome> complete() async {
+    final outcome = await _run(_delegate.complete);
+    if (outcome.complete) onCompleted?.call();
+    return outcome;
+  }
+
   @override
   Future<void> invalidate() {
     _retired = true; // 网络/排空前退休；即便失败也不能复开。

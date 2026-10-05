@@ -5,14 +5,52 @@ android-sdk = "19.0"
 cmake = "3.31.8"
 go = "1.26.4"
 ninja = "1.12.1"
+python = "3.13.14"
 
 [tasks.deps]
 description = "解析 Flutter 依赖"
 run = "./tool/flutter.sh pub get"
 
+[tasks.check-no-compat-android]
+description = "编译原生密钥存储改动，不安装或运行设备"
+run = "cd android && ./gradlew :app:compileDebugKotlin --console=plain"
+
 [tasks.analyze]
 description = "静态分析手机端源码"
 run = "./tool/flutter.sh analyze --no-pub"
+
+[tasks.check-account-access]
+description = "恢复与重置的现有非 UI 业务、原生通道和中断回归"
+run = ["dart format lib/main.dart lib/native/native_vault_gateway.dart lib/account_reset/account_reset_host.dart lib/vault_controller.dart lib/ui/account_reset_ui.dart lib/ui/harmonia_app.dart", "./tool/flutter.sh analyze --no-pub", "./tool/flutter.sh test test/recovery_business_test.dart test/recovery_closure_business_test.dart test/account_reset_business_test.dart test/account_reset_channel_test.dart test/account_reset_host_test.dart test/dag_business_routing_test.dart test/dag_environment_routing_test.dart"]
+
+[tasks.check-ios-account-access]
+description = "用真实 Go XCFramework 编译 iOS 原生桥与独立合成宿主"
+run = 'bash tool/ios-official-auth-build.sh "$(mise where flutter@3.47.6)"'
+
+[tasks.ios-simulator]
+description = "构建 iOS Simulator 产品，不发布或安装"
+run = "./tool/flutter.sh build ios --simulator --debug --no-codesign"
+
+[tasks.ios-release]
+description = "构建 iOS 真机 Release 产物，不签名、安装或发布"
+run = "./tool/flutter.sh build ios --release --no-codesign"
+
+[tasks.ios-link-check]
+description = "检查 arm64 Simulator 产品的 Xcode 链接诊断"
+run = "xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner -configuration Debug -sdk iphonesimulator -destination generic/platform=iOS\\ Simulator ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO build"
+
+[tasks.test-ios-account-access]
+description = "新建独立 Simulator 执行原生存储与访问验证，结束后仅删除本次设备"
+depends = ["ios-security-build"]
+run = "python3 tool/ios-account-access-test.py"
+
+[tasks.format-email-limits]
+description = "格式化邮件重发及限流提示涉及的 Dart 文件"
+run = "dart format lib/vault_controller.dart lib/ui/harmonia_app.dart lib/ui/account_reset_ui.dart lib/native/native_vault_gateway.dart lib/native/native_ui_contract.dart lib/native/native_workflow_adapter.dart lib/native/native_account_reset_adapter.dart lib/account_reset/account_reset_gateway.dart lib/account_reset/account_reset_coordinator.dart lib/account_reset/account_reset_presentation.dart"
+
+[tasks.check-email-limits]
+description = "邮件重发源码静态检查与既有账号/隐私业务回归，不包含 UI 单元测试"
+run = ["./tool/flutter.sh analyze --no-pub", "./tool/flutter.sh test test/account_reset_business_test.dart test/native_gateway_mapping_test.dart test/connection_privacy_test.dart test/native_lifecycle_resume_test.dart"]
 
 [tasks.test-domain]
 description = "验证控制层安全边界，不含界面单元测试"
@@ -21,12 +59,49 @@ run = "./tool/flutter.sh test test/vault_gateway_test.dart"
 [tasks.android-debug]
 depends = ["go-native-build"]
 description = "构建本机 Android 合成预览调试产物"
-run = "./tool/flutter.sh build apk --debug --dart-define=HARMONIA_PREVIEW=true"
+run = "ORG_GRADLE_PROJECT_harmoniaPreview=true ./tool/flutter.sh build apk --debug --target-platform android-arm64 --dart-define=HARMONIA_PREVIEW=true"
+
+[tasks.android-signing]
+description = "准备仅保存在本机的 Release 签名，不覆盖已有签名配置"
+run = "python3 tool/android-signing.py"
+
+[tasks.android-release]
+depends = ["go-native-build", "android-signing"]
+description = "构建已签名的 Android Release 版"
+run = "./tool/flutter.sh build apk --release --target-platform android-arm64"
+
+[tasks.format-entry]
+description = "格式化账号入口及恢复页面"
+run = "dart format lib/main.dart lib/ui/design_system.dart lib/ui/harmonia_app.dart lib/ui/recovery_ui.dart lib/ui/account_reset_ui.dart lib/recovery/recovery_presentation.dart lib/recovery/recovery_coordinator.dart lib/account_reset/account_reset_coordinator.dart"
+
+[tasks.format-account]
+description = "格式化账号请求适配层"
+run = "dart format lib/native/native_vault_gateway.dart"
+
+[tasks.check-entry]
+description = "检查现有账号、隐私及恢复业务回归，不包含 UI 单元测试"
+run = "./tool/flutter.sh test test/connection_privacy_test.dart test/native_lifecycle_resume_test.dart test/recovery_business_test.dart test/recovery_closure_business_test.dart test/account_reset_business_test.dart"
+
+[tasks.android-install]
+description = "将已构建的预览 APK 安装到显式选择的 ADB 设备，保留应用数据"
+run = 'adb -s "${HARMONIA_ANDROID_SERIAL:?请指定 ADB 设备序列号}" install -r build/app/outputs/flutter-apk/app-debug.apk'
+
+[tasks.android-open]
+description = "在显式选择的 ADB 设备上打开预览版"
+run = 'adb -s "${HARMONIA_ANDROID_SERIAL:?请指定 ADB 设备序列号}" shell am start -W -n org.harmoniavault.harmonia_mobile.preview/org.harmoniavault.harmonia_mobile.MainActivity'
+
+[tasks.android-install-release]
+description = "将已签名的 Release APK 安装到显式选择的 ADB 设备"
+run = 'adb -s "${HARMONIA_ANDROID_SERIAL:?请指定 ADB 设备序列号}" install -r build/app/outputs/flutter-apk/app-release.apk'
+
+[tasks.android-open-release]
+description = "在显式选择的 ADB 设备上打开 Release 版"
+run = 'adb -s "${HARMONIA_ANDROID_SERIAL:?请指定 ADB 设备序列号}" shell am start -W -n org.harmoniavault.harmonia_mobile/.MainActivity'
 
 [tasks.preview]
 depends = ["go-native-build"]
 description = "在显式选择的测试设备运行合成预览"
-run = "./tool/flutter.sh run --dart-define=HARMONIA_PREVIEW=true"
+run = "ORG_GRADLE_PROJECT_harmoniaPreview=true ./tool/flutter.sh run --dart-define=HARMONIA_PREVIEW=true"
 
 [tasks.go-native-build]
 description = "构建固定Go/BoringSSL Android arm64桥，仅生成ignored AAR"
@@ -37,16 +112,13 @@ description = "仅显式隔离AVD：原生审批到compiled CLI focused验收；
 run = 'python3 tool/native-approval-test.py --serial "${HARMONIA_TEST_SERIAL:?须显式选择合成emulator序号}"'
 
 [tasks.test-native-generic]
-description = "仅显式隔离AVD：cert3 Y-only入网/轮换/审批到默认3 compiled CLI；先按V3_NATIVE准备固定快照、夹具与PIN"
+description = "仅显式隔离AVD：DAG Y-only 入网、轮换与 CLI 授权；先准备夹具与 PIN"
 run = 'python3 tool/native-generic-test.py --serial "${HARMONIA_TEST_SERIAL:?须显式选择合成emulator序号}"'
 
 [tasks.test-native-management]
 description = "隔离AVD原生管理/原包状态/密封保存与真实Go权限验收（先准备合成PIN/HTTPS/APK）"
 run = 'python3 tool/native-management-test.py --serial "${HARMONIA_TEST_SERIAL:?请显式选择隔离AVD}"'
 
-[tasks.test-native-recovery]
-description = "隔离AVD连续恢复三进程/原25签包/显式cert4登记与正式CLI4（先准备固定快照、合成PIN与HTTPS）"
-run = 'python3 tool/native-recovery-test.py --serial "${HARMONIA_TEST_SERIAL:?请显式选择隔离AVD}"'
 
 [tasks.test-native-account]
 description = "隔离AVD账号/可信投影/原ID续办三进程（先按ACCOUNT_NATIVE准备固定快照、合成PIN与HTTPS）"
@@ -71,3 +143,16 @@ run = 'python3 tool/native-dag-lifecycle-test.py --candidate "${HARMONIA_DAG_CAN
 [tasks.test-native-dag-dispatch]
 description = "仅独立候选：B1/B2封闭原生分派、实际Java ABI与SDK编译，不运行Android"
 run = 'python3 tool/native-dag-dispatch-test.py --candidate "${HARMONIA_DAG_CANDIDATE:?须显式候选目录}" --aar "${HARMONIA_DAG_AAR:?须显式固定候选AAR}" --output "${HARMONIA_DAG_TEST_OUTPUT:?须新输出目录}"'
+
+[tasks.check-email-code]
+description = "检查邮箱短码相关源码与现有非 UI 业务回归"
+run = ["dart format lib/email_code.dart test/email_code_test.dart test/account_reset_business_test.dart test/native_gateway_mapping_test.dart lib/native/native_vault_gateway.dart lib/native/native_workflow_adapter.dart lib/native/native_ui_contract.dart lib/ui/account_reset_ui.dart lib/ui/harmonia_app.dart lib/vault_controller.dart lib/account_reset/account_reset_coordinator.dart lib/account_reset/account_reset_gateway.dart lib/native/native_account_reset_adapter.dart lib/native/native_account_reset_channel.dart", "dart analyze lib/native/native_ui_contract.dart lib/ui/account_reset_ui.dart lib/ui/harmonia_app.dart lib/vault_controller.dart lib/account_reset lib/native/native_account_reset_adapter.dart lib/native/native_account_reset_channel.dart", "./tool/flutter.sh test test/email_code_test.dart test/account_reset_business_test.dart test/native_gateway_mapping_test.dart"]
+
+[tasks.test-dag-domain]
+run = "./tool/flutter.sh test test/native_gateway_mapping_test.dart test/pending_pairings_business_test.dart test/connection_privacy_test.dart test/native_lifecycle_resume_test.dart test/dag_business_routing_test.dart test/dag_environment_routing_test.dart test/recovery_business_test.dart test/recovery_closure_business_test.dart"
+
+[tasks.test-dag-all-business]
+run = "./tool/flutter.sh test test/account_reset_business_test.dart test/account_reset_channel_test.dart test/account_reset_host_test.dart test/connection_privacy_test.dart test/dag_business_routing_test.dart test/dag_environment_routing_test.dart test/email_code_test.dart test/management_business_test.dart test/native_fixture_connection_test.dart test/native_gateway_mapping_test.dart test/native_lifecycle_resume_test.dart test/native_pin_adapter_test.dart test/native_restore_pending_state_test.dart test/native_ui_contract_test.dart test/navigation_state_test.dart test/pending_pairings_business_test.dart test/recovery_business_test.dart test/recovery_closure_business_test.dart test/sensitive_input_guard_test.dart test/vault_gateway_test.dart test/vault_route_business_test.dart"
+
+[tasks.format-dag]
+run = "dart format lib/native/native_vault_gateway.dart lib/native/native_workflow_adapter.dart lib/native/native_pending_pairings_adapter.dart lib/vault_controller.dart test/native_gateway_mapping_test.dart test/pending_pairings_business_test.dart test/recovery_business_test.dart"

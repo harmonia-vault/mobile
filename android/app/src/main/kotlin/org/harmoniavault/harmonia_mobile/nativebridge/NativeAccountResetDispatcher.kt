@@ -146,7 +146,14 @@ internal class NativeAccountResetDispatcher(
         worker.execute {
             var value: String? = null; var error: String? = null
             try { check(alive(op)); value = action(); check(alive(op)) }
-            catch (_: Exception) { error = "ACCOUNT_RESET_REJECTED" }
+            catch (failure: Exception) {
+                error = when (failure.message) {
+                    "EMAIL_CODE_INVALID" -> "EMAIL_CODE_INVALID"
+                    "EMAIL_CODE_EXPIRED" -> "EMAIL_CODE_EXPIRED"
+                    "EMAIL_CODE_EXHAUSTED" -> "EMAIL_CODE_EXHAUSTED"
+                    else -> "ACCOUNT_RESET_REJECTED"
+                }
+            }
             finally { op.input?.fill(0); op.input = null }
             finish(op, value, error)
         }

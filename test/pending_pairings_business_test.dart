@@ -28,14 +28,14 @@ Map<String, Object?> row({
           .toString(),
 };
 Map<String, Object?> snapshot({
-  String version = '3',
+  String version = '5',
   List<Map<String, Object?>>? rows,
 }) => {
   'accountId': 'account-fixture',
   'accountGeneration': '1',
   'approverDeviceId': 'a' * 64,
   'certificateVersion': version,
-  'capabilities': [version == '3' ? 'issuer-origin-v1' : 'issuer-recovery-v1'],
+  'capabilities': ['issuer-recovery-dag-v1'],
   'requests': rows ?? [row()],
   'authoritativeForApproval': false,
 };
@@ -47,7 +47,7 @@ Map<String, Object?> envelope(String operation, Map<String, Object?> data) => {
 };
 
 class PendingPort extends PortFixture implements NativePendingPairingsPort {
-  bool compiled3 = true, compiled4 = true;
+  bool compiled5 = true;
   Map<String, Object?> data = snapshot();
   final reads = <String>[];
   Completer<Map<String, Object?>>? delayed;
@@ -55,8 +55,7 @@ class PendingPort extends PortFixture implements NativePendingPairingsPort {
   @override
   Future<Map<String, Object?>> capabilities() async => {
     ...await super.capabilities(),
-    'nativePendingPairingRequestsV3': compiled3,
-    'nativePendingPairingRequestsV4': compiled4,
+    'nativePendingPairingRequestsV5': compiled5,
   };
   @override
   Future<Map<String, Object?>> executePendingPairings(
@@ -112,7 +111,7 @@ Future<(VaultController, NativeVaultGateway, PendingPort)> setup({
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   test('strict V3/V4 snapshot拒绝来源错配、authority、秘密字段、重复ID和非法到期', () {
-    for (final version in ['3', '4']) {
+    for (final version in ['5']) {
       final op = 'pendingPairingRequestsV$version';
       final parsed = decodePendingPairings(
         op,
@@ -121,7 +120,7 @@ void main() {
       expect(parsed.certificateVersion, version);
       expect(parsed.authoritativeForApproval, false);
     }
-    const op = 'pendingPairingRequestsV3';
+    const op = 'pendingPairingRequestsV5';
     for (final patch in <Map<String, Object?>>[
       {'certificateVersion': '4'},
       {
@@ -179,40 +178,40 @@ void main() {
       expect(command, {
         'version': 1,
         'endpoint': endpoint,
-        'operation': 'pendingPairingRequestsV3',
+        'operation': 'pendingPairingRequestsV5',
       });
       if (reject) throw PlatformException(code: 'AUTH_CANCELLED');
-      return jsonEncode(envelope('pendingPairingRequestsV3', snapshot()));
+      return jsonEncode(envelope('pendingPairingRequestsV5', snapshot()));
     });
     addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
     const adapter = NativePendingPairingsAdapter();
     final raw = await adapter.executePendingPairings(
       endpoint,
-      'pendingPairingRequestsV3',
+      'pendingPairingRequestsV5',
     );
     expect(
-      decodePendingPairings('pendingPairingRequestsV3', raw).requests,
+      decodePendingPairings('pendingPairingRequestsV5', raw).requests,
       hasLength(1),
     );
     reject = true;
     await expectLater(
-      adapter.executePendingPairings(endpoint, 'pendingPairingRequestsV3'),
+      adapter.executePendingPairings(endpoint, 'pendingPairingRequestsV5'),
       throwsA(isA<PlatformException>()),
     );
     await expectLater(
-      adapter.executePendingPairings(endpoint, 'pendingPairingRequestsV5'),
+      adapter.executePendingPairings(endpoint, 'pendingPairingRequestsV3'),
       throwsA(isA<GatewayFailure>()),
     );
     expect(calls, 2);
   });
 
-  test('编译cap×独立evidence；cold未知审批版本不由hint自举', () async {
-    for (final mode in ['evidence-empty', 'compiled-missing', 'cold-version']) {
-      final fixture = PendingPort()..compiled3 = mode != 'compiled-missing';
+  test('缺少编译能力或独立证据时不可读取申请', () async {
+    for (final mode in ['evidence-empty', 'compiled-missing']) {
+      final fixture = PendingPort()..compiled5 = mode != 'compiled-missing';
       final (c, g, f) = await setup(
         fixture: fixture,
         evidence: mode == 'evidence-empty' ? {} : pendingPairingOperations,
-        explicitSource: mode != 'cold-version',
+        explicitSource: true,
       );
       addTearDown(c.dispose);
       expect(g.pendingPairingsAvailable, false);
@@ -222,13 +221,23 @@ void main() {
     }
   });
 
+  test('冷恢复可信会话可以读取申请，申请列表不能授予权限', () async {
+    final (c, g, f) = await setup(explicitSource: false);
+    addTearDown(c.dispose);
+    expect(g.pendingPairingsAvailable, true);
+    await c.refreshPendingPairings();
+    expect(c.pendingPairings.requests.single.pairingId, 'pair-original');
+    expect(c.pendingPairings.authoritativeForApproval, false);
+    expect(f.approvalVersion, 0);
+  });
+
   test('每次刷新独立native读且整快照替换，同ID不叠加/approved不是权限', () async {
     final (c, _, f) = await setup();
     addTearDown(c.dispose);
     final ordinary = f.calls.length;
     await c.refreshPendingPairings();
     await c.refreshPendingPairings();
-    expect(f.reads, ['pendingPairingRequestsV3', 'pendingPairingRequestsV3']);
+    expect(f.reads, ['pendingPairingRequestsV5', 'pendingPairingRequestsV5']);
     expect(f.calls.length, ordinary); // 不用旧execute/缓存view伪装fresh native读取。
     expect(c.pendingPairings.requests.single.pairingId, 'pair-original');
     expect(
@@ -318,7 +327,7 @@ void main() {
       } else {
         c.setForeground(false);
       }
-      f.delayed!.complete(envelope('pendingPairingRequestsV3', snapshot()));
+      f.delayed!.complete(envelope('pendingPairingRequestsV5', snapshot()));
       await reading;
       expect(c.pendingPairings.requests, isEmpty);
       expect(c.pendingPairings.busy, false);
@@ -364,7 +373,7 @@ void main() {
         lifetime: const Duration(minutes: 15),
       ),
     );
-    expect(f.approvalVersion, 3);
+    expect(f.approvalVersion, 5);
     expect(f.pairingId, id);
     expect(c.pendingPairings.requests, isEmpty);
     expect(f.consumedCode, everyElement(0));

@@ -26,6 +26,13 @@ class MethodChannelAccountResetPort
       throw const AccountResetFailure(AccountResetFailureCode.unavailable);
     } on AccountResetFailure {
       rethrow;
+    } on PlatformException catch (error) {
+      throw AccountResetFailure(switch (error.code) {
+        'EMAIL_CODE_INVALID' => AccountResetFailureCode.codeInvalid,
+        'EMAIL_CODE_EXPIRED' => AccountResetFailureCode.codeExpired,
+        'EMAIL_CODE_EXHAUSTED' => AccountResetFailureCode.codeExhausted,
+        _ => AccountResetFailureCode.nativeRejected,
+      });
     } catch (_) {
       // 不读取/显示PlatformException的message、details或原生错误原文。
       throw const AccountResetFailure(AccountResetFailureCode.nativeRejected);

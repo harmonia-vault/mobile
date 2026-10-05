@@ -26,6 +26,16 @@ final class ProtectedDeviceStore {
     throw NativeSecurityFailure("PROTECTED_KEYS_UNAVAILABLE")
   }
 
+  func hasPINArtifacts() throws -> Bool {
+    let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service.replacingOccurrences(of: ".harmonia.system-device.v1", with: ".harmonia.pin-mac.v1"),
+      kSecReturnAttributes as String: true, kSecAttrSynchronizable as String: false]
+    let status = SecItemCopyMatching(q as CFDictionary, nil)
+    if status == errSecItemNotFound { return false }
+    guard status == errSecSuccess else { throw NativeSecurityFailure("LOCAL_PROTECTION_STATE") }
+    return true
+  }
+
   func create(_ material: Data, context: LAContext) throws {
     guard material.count == 72, !((try? exists()) ?? true) else {
       throw NativeSecurityFailure("PROTECTED_KEYS_UNAVAILABLE")

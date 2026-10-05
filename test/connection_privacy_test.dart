@@ -12,7 +12,7 @@ class ConnectionFixture extends FixtureGateway
     'product': 'harmonia',
     'status': 'experimental',
     'protocol': {
-      'supportedMajors': [1],
+      'supportedMajors': [2],
       'capabilities': ['registration-policy-v1', 'email-proof-v1'],
     },
     'initialRegistrationAvailable': false,
@@ -187,7 +187,7 @@ void main() {
         'product': 'harmonia',
         'status': 'experimental',
         'protocol': {
-          'supportedMajors': [1],
+          'supportedMajors': [2],
           'capabilities': <String>[],
         },
         'initialRegistrationAvailable': 'true',

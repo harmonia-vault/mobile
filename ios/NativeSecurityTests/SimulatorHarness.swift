@@ -89,15 +89,20 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
       let directory = FileManager.default.temporaryDirectory.appendingPathComponent("state-" + UUID().uuidString)
       var active = true
       let store = ProtectedWorkflowStore(bundleIdentifier: Bundle.main.bundleIdentifier!, directory: directory) { active }
-      let packet = Data("HARMST01".utf8) + Data(repeating: 0x5a, count: 64)
+      try store.acquireSlot()
+      defer { store.closeSlot() }
+      let packet = Data("HARMST02".utf8) + Data(repeating: 0x5a, count: 64)
       try store.saveSealed(packet)
       let reopened = ProtectedWorkflowStore(bundleIdentifier: Bundle.main.bundleIdentifier!, directory: directory) { true }
       guard try reopened.load() == packet else { return false }
       do { try store.saveSealed(Data("malformed".utf8)); return false } catch {}
       guard try reopened.load() == packet else { return false }
       active = false
-      do { try store.saveSealed(Data("HARMST01".utf8) + Data(repeating: 0x77, count: 64)); return false } catch {}
+      do { try store.saveSealed(Data("HARMST02".utf8) + Data(repeating: 0x77, count: 64)); return false } catch {}
       guard try reopened.load() == packet else { return false }
+      store.closeSlot()
+      try reopened.acquireSlot()
+      defer { reopened.closeSlot() }
       try reopened.delete()
       return try reopened.load().isEmpty
     }
@@ -108,10 +113,45 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
       guard info["trusted"] as? Bool == false else { return false }
       let directory = FileManager.default.temporaryDirectory.appendingPathComponent("untrusted-" + UUID().uuidString)
       let store = ProtectedWorkflowStore(bundleIdentifier: Bundle.main.bundleIdentifier!, directory: directory) { true }
-      let flow = try device.openWorkflow("https://synthetic.invalid", namespace: store.namespace, sealed: Data(), additionalCA: Data(), store: store)
+      try store.acquireSlot()
+      defer { store.closeSlot() }
+      let flow = try device.openAtomicWorkflow("https://synthetic.invalid", namespace: store.namespace, sealed: Data(), additionalCA: Data(), store: store)
       defer { flow.close() }
       let result = try object(NativeBridgePlugin.go { flow.execute("{\"version\":1,\"operation\":\"view\",\"endpoint\":\"https://synthetic.invalid\"}", error: &$0) })
       return result["ok"] as? Bool == false && result["code"] as? String == "NOT_TRUSTED"
+    }
+    check("recovery-slot-CAS-rejects-stale-writer-and-cancelled-owner") {
+      let directory = FileManager.default.temporaryDirectory.appendingPathComponent("recovery-cas-" + UUID().uuidString)
+      defer { try? FileManager.default.removeItem(at: directory) }
+      var active = true
+      let first = ProtectedWorkflowStore(bundleIdentifier: Bundle.main.bundleIdentifier!, directory: directory) { active }
+      let second = ProtectedWorkflowStore(bundleIdentifier: Bundle.main.bundleIdentifier!, directory: directory) { true }
+      defer { first.closeSlot(); second.closeSlot() }
+      let packet = Data("HARMST02".utf8) + Data(repeating: 0x5a, count: 64)
+      let next = Data("HARMST02".utf8) + Data(repeating: 0x6b, count: 64)
+      try first.acquireSlot()
+      do { try second.acquireSlot(); return false } catch {}
+      try first.compareAndSwapSealed(Data(), next: packet)
+      do { try first.compareAndSwapSealed(Data(), next: next); return false } catch {}
+      guard try first.load() == packet else { return false }
+      active = false
+      do { try first.compareAndSwapSealed(packet, next: next); return false } catch {}
+      first.closeSlot()
+      try second.acquireSlot()
+      try second.checkSealed(packet)
+      try second.compareAndSwapSealed(packet, next: next)
+      second.closeSlot()
+      let reopened = ProtectedWorkflowStore(bundleIdentifier: Bundle.main.bundleIdentifier!, directory: directory) { true }
+      try reopened.acquireSlot()
+      defer { reopened.closeSlot() }
+      guard try reopened.load() == next else { return false }
+      try reopened.delete()
+      return try !reopened.exists()
+    }
+    let oldProof = await invoke("beginAccountReset", ["endpoint": "https://synthetic.invalid",
+      "proof": FlutterStandardTypedData(bytes: Data("{\"accountId\":\"old\",\"token\":\"old\"}".utf8))])
+    check("reset-rejects-pasted-proof-before-network-or-local-deletion") {
+      (oldProof as? FlutterError)?.code == "INVALID_COMMAND"
     }
     check("strict-Go-command-parser-rejects-duplicate-fields") {
       do {
@@ -135,13 +175,15 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
           if let password { fields["email"] = account["email"]!; fields["password"] = password }
           return String(decoding: try JSONSerialization.data(withJSONObject: fields), as: UTF8.self)
         }
+        try store.acquireSlot()
+        defer { store.closeSlot() }
         // 未加入本次CA时必须失败，绝不设置跳过证书或hostname验证。
-        let untrustedTLS = try device.openWorkflow(endpoint, namespace: store.namespace, sealed: Data(), additionalCA: Data(), store: store)
+        let untrustedTLS = try device.openAtomicWorkflow(endpoint, namespace: store.namespace, sealed: Data(), additionalCA: Data(), store: store)
         let login = try command("loginAccount", password: account["password"]!)
         let deniedTLS = try object(NativeBridgePlugin.go { untrustedTLS.execute(login, error: &$0) })
         untrustedTLS.close()
         guard deniedTLS["ok"] as? Bool == false else { return false }
-        let flow = try device.openWorkflow(endpoint, namespace: store.namespace, sealed: Data(), additionalCA: ca, store: store)
+        let flow = try device.openAtomicWorkflow(endpoint, namespace: store.namespace, sealed: Data(), additionalCA: ca, store: store)
         defer { flow.close() }
         let authenticated = try object(NativeBridgePlugin.go { flow.execute(login, error: &$0) })
         guard authenticated["ok"] as? Bool == true,

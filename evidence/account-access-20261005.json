@@ -1,0 +1,170 @@
+{
+  "date": "2026-10-05",
+  "scope": "Android/iOS 恢复访问、恢复后读写、邮箱六位码重置和返回登录",
+  "developmentChecks": {
+    "flutter": {
+      "task": "mise run check-account-access",
+      "analysis": "PASS",
+      "businessAndChannelTests": 72,
+      "result": "PASS"
+    },
+    "https": {
+      "task": "mise run test-account-access-https",
+      "result": "PASS",
+      "cases": [
+        "TestNativeBridgeDAGAppliedHTTPS",
+        "TestNativeBridgeDAGBusinessHTTPS",
+        "TestNativeBridgeDAGEnvironmentHTTPS",
+        "TestNativeBridgeDAGResolutionHTTPS",
+        "TestNativeAccountResetRequestedEmailHTTPSOriginalProofAndUnknownCommit"
+      ],
+      "raceEnabled": false
+    },
+    "iosNative": {
+      "task": "mise run test-ios-account-access",
+      "passed": 16,
+      "failed": 0,
+      "checks": [
+        {
+          "name": "LA-classification-never-downgrades-transient-errors",
+          "status": "PASS"
+        },
+        {
+          "name": "production-capabilities-no-fake-trust-or-PIN",
+          "status": "PASS"
+        },
+        {
+          "name": "actual-Go-BoringSSL-SPAKE2-Ed25519-HPKE-AEAD",
+          "status": "PASS"
+        },
+        {
+          "name": "invalid-short-code-rejected-before-authentication",
+          "status": "PASS"
+        },
+        {
+          "name": "actual-unavailable-system-auth-cannot-create-device",
+          "reason": "simulator-reports-system-auth-ready",
+          "status": "UNRUN"
+        },
+        {
+          "name": "Keychain-missing-slot-never-returns-material",
+          "status": "PASS"
+        },
+        {
+          "name": "durable-encrypted-state-reopen-invalid-save-and-cancellation",
+          "status": "PASS"
+        },
+        {
+          "name": "actual-Go-software-device-and-view-remain-untrusted",
+          "status": "PASS"
+        },
+        {
+          "name": "recovery-slot-CAS-rejects-stale-writer-and-cancelled-owner",
+          "status": "PASS"
+        },
+        {
+          "name": "reset-rejects-pasted-proof-before-network-or-local-deletion",
+          "status": "PASS"
+        },
+        {
+          "name": "strict-Go-command-parser-rejects-duplicate-fields",
+          "status": "PASS"
+        },
+        {
+          "name": "actual-iOS-Go-HTTPS-account-login-is-not-device-trust",
+          "reason": "no-independent-native-fixture-resources",
+          "status": "UNRUN"
+        },
+        {
+          "name": "actual-Keychain-MAC-Go-Argon2-PIN-durable-limiter-and-no-trust",
+          "reason": "actual-LA-did-not-report-passcodeNotSet",
+          "status": "UNRUN"
+        },
+        {
+          "name": "PIN-component-real-Go-close-error-overrides-success",
+          "scope": "storage-component-only-no-auth-bypass-in-product",
+          "status": "PASS"
+        },
+        {
+          "name": "PIN-component-release-error-fails-and-reopen-lock-is-free",
+          "scope": "storage-component-only-no-auth-bypass-in-product",
+          "status": "PASS"
+        },
+        {
+          "name": "PIN-component-failed-initial-save-cleans-exact-Keychain-slot",
+          "scope": "storage-component-only-no-auth-bypass-in-product",
+          "status": "PASS"
+        },
+        {
+          "name": "PIN-component-failed-cleanup-remains-incomplete-until-forget",
+          "scope": "storage-component-only-no-auth-bypass-in-product",
+          "status": "PASS"
+        },
+        {
+          "name": "PIN-component-Argon2-MAC-limiter-reopen-no-cloud-trust",
+          "scope": "storage-component-only-no-auth-bypass-in-product",
+          "status": "PASS"
+        },
+        {
+          "name": "actual-system-auth-production-entry-bounded-no-trust",
+          "outcome": "LOCKED",
+          "scope": "simulator-real-SDK-call-not-real-device-auth-proof",
+          "status": "PASS"
+        },
+        {
+          "name": "real-device-passcode-biometry-and-hardware-security",
+          "reason": "simulator-does-not-prove-real-device-security",
+          "status": "UNRUN"
+        }
+      ],
+      "runId": "3B4F1ED7-8124-45D1-A7CE-2CF4DDA2F604",
+      "ownSimulatorDeleted": true
+    },
+    "raceDiagnostic": {
+      "result": "TIMEOUT",
+      "cases": [
+        "TestNativeBridgeDAGBusinessHTTPS",
+        "TestNativeBridgeDAGEnvironmentHTTPS"
+      ],
+      "diagnosis": "race 插桩下超过既有 30 秒操作期限；一次捕获显示 context deadline exceeded、saved=false、cause=nil。常规构建集成检查通过，产品期限未放宽。"
+    }
+  },
+  "review": {
+    "baseline": "本次开始前已保存的源码快照，保留既有及并行改动",
+    "simplify": "仅针对本次新增 iOS 处理器、存储及 Dart 接线",
+    "standards": "本地检查完成",
+    "spec": "本地检查完成，修复回调早于原生资源关闭、重置完成后旧本机缓存、恢复设备冷启动识别及 iOS 原子存储支持",
+    "independentReview": "两名审查代理均因上游 502/certificate verification 失败，未取得独立审查结论"
+  },
+  "acceptance": {
+    "userDevices": "未在用户真机运行恢复或破坏性重置",
+    "iosSigning": "未签名；真机安装需签名",
+    "oldProofInput": "不支持；只接收 {email, code}"
+  },
+  "sourceSHA256": {
+    "lib/main.dart": "56fd906899cb7b366f7b0b98dad7429441afe77e8974d36e3338a8484ae4a052",
+    "lib/native/native_vault_gateway.dart": "c91af2915787b57c5ee6d1ada48de23981276eb0ae33adf1982568685d82cbb6",
+    "lib/account_reset/account_reset_host.dart": "e1828ebd31fff09d480c03f5060238dbddec7163354675df5147db92db2c66ef",
+    "lib/vault_controller.dart": "49b5e30a53cfa1dc36c50b376e8522881bb14d9e8d4d391aff00dac1b8e08c49",
+    "lib/ui/account_reset_ui.dart": "c9e1a5754be92fd936eeeabbbd7f4a4cb7137925072de36e608841fe3fe3ef61",
+    "ios/Runner/NativeBridge/NativeBridgePlugin.swift": "696f839c7cc2da96a7f89cd2da6ff4974a20ec22c28d747f086cff1acd40590b",
+    "ios/Runner/NativeBridge/ProtectedWorkflowStore.swift": "0f85f89504dee38111c30b5d91a5e0b386627da7be4aaf69de3bd99da89dc120",
+    "ios/Runner/NativeBridge/ProtectedDeviceStore.swift": "89ef6b9b9a2d10aa992b09359a8d26184f98e872ef7029505eb902f240f194ca"
+  },
+  "builds": {
+    "androidRelease": {
+      "task": "mise run android-release",
+      "result": "PASS",
+      "path": "build/app/outputs/flutter-apk/app-release.apk",
+      "sizeBytes": 31425843,
+      "SHA256": "8d6e869e8080f78ef806bfb45c2c5037552d435d08ea3e6f10385fc6eaf21693"
+    },
+    "iosReleaseUnsigned": {
+      "task": "mise run ios-release",
+      "result": "PASS",
+      "path": "build/ios/iphoneos/Runner.app/Runner",
+      "sizeBytes": 11153880,
+      "SHA256": "98240a71d3517b8a6593cef815ea101bd51a0c1765da464fb4c6052147e5b0c9"
+    }
+  }
+}

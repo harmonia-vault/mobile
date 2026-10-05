@@ -116,12 +116,13 @@ void main() {
     server.listen((request) async {
       requests++;
       request.response.headers.contentType = ContentType.json;
+      request.response.headers.set('Harmonia-Protocol-Major','2');
       request.response.write(
         jsonEncode({
           'product': 'harmonia',
           'status': 'experimental',
           'protocol': {
-            'supportedMajors': [1],
+            'supportedMajors': [2],
             'capabilities': <String>[],
           },
           'initialRegistrationAvailable': true,

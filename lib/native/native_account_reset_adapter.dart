@@ -136,6 +136,19 @@ class NativeAccountResetAdapter implements AccountResetGateway {
         throw const AccountResetFailure(AccountResetFailureCode.retired);
       }
       final data = _object(raw);
+      if (data['version'] == 1 &&
+          data['accepted'] == false &&
+          data['trustedDevice'] == false) {
+        _fields(data, {
+          'version',
+          'accepted',
+          'trustedDevice',
+          'retryAfterSeconds',
+        });
+        final seconds = data['retryAfterSeconds'];
+        if (seconds is! int || seconds < 1 || seconds > 86400) _bad();
+        throw AccountResetEmailRateLimitFailure(seconds);
+      }
       _fields(data, {'version', 'accepted', 'trustedDevice'});
       if (data['version'] is! int ||
           data['version'] != 1 ||
@@ -177,6 +190,13 @@ class NativeAccountResetAdapter implements AccountResetGateway {
       final out = decodeAccountResetOutcome(raw, statusOnly: true);
       _verifiedPending = !out.complete;
       return out;
+    } on AccountResetFailure catch (error) {
+      if (error.code == AccountResetFailureCode.codeInvalid ||
+          error.code == AccountResetFailureCode.codeExpired ||
+          error.code == AccountResetFailureCode.codeExhausted) {
+        _ownerStarted = false;
+      }
+      rethrow;
     } finally {
       proof.fillRange(0, proof.length, 0);
     }

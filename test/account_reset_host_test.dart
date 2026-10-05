@@ -135,7 +135,7 @@ Future<VaultController> host(HostFixture g, {bool trusted = false}) async {
 
 Future<void> prepared(VaultController c) async {
   await c.requestAccountResetEmail('synthetic@example.invalid');
-  final proof = input();
+  final proof = Uint8List.fromList('A2BC3DE4'.codeUnits);
   await c.beginFreshAccountReset(proof);
   expect(proof, everyElement(0));
   final password = input();
@@ -221,7 +221,7 @@ void main() {
     final g = HostFixture(), c = await host(g, trusted: true);
     await c.requestAccountResetEmail('synthetic@example.invalid');
     g.reset.current = result(id: 'other-account');
-    final proof = input();
+    final proof = Uint8List.fromList('A2BC3DE4'.codeUnits);
     await expectLater(
       c.beginFreshAccountReset(proof),
       throwsA(isA<AccountResetFailure>()),

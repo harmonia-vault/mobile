@@ -1,3 +1,5 @@
+import "../email_code.dart";
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -26,17 +28,12 @@ class HarmoniaApp extends StatefulWidget {
   State<HarmoniaApp> createState() => _HarmoniaAppState();
 }
 
-class _HarmoniaAppState extends State<HarmoniaApp>
-    with WidgetsBindingObserver {
+class _HarmoniaAppState extends State<HarmoniaApp> {
   late final _delegate = _Delegate(widget.controller);
-
-  bool get _localProtection =>
-      widget.controller.gateway is LocalProtectionGateway;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     if (widget.controller.gateway case final LocalProtectionGateway g) {
       // Dialogs only collect one-shot input; the gateway owns validation.
       g.bindLocalPINCallbacks(
@@ -53,16 +50,7 @@ class _HarmoniaAppState extends State<HarmoniaApp>
   }
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    final c = widget.controller;
-    if (state == AppLifecycleState.resumed && _localProtection && !c.busy) {
-      unawaited(c.refreshLocalProtection());
-    }
-  }
-
-  @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _delegate.dispose();
     super.dispose();
   }
@@ -221,8 +209,11 @@ int? _tabOf(VaultPage p) => switch (p) {
   VaultPage.environments ||
   VaultPage.environmentDetail ||
   VaultPage.variableEditor => 0,
-  VaultPage.devices || VaultPage.deviceDetail || VaultPage.deviceManagement ||
-  VaultPage.pendingPairingDetail || VaultPage.approval => 1,
+  VaultPage.devices ||
+  VaultPage.deviceDetail ||
+  VaultPage.deviceManagement ||
+  VaultPage.pendingPairingDetail ||
+  VaultPage.approval => 1,
   VaultPage.settings ||
   VaultPage.accountSecurity ||
   VaultPage.recoveryManagement => 2,
@@ -249,12 +240,17 @@ Widget _body(VaultController c, VaultPage? p) {
     VaultPage.devices => _DeviceList(c: c),
     VaultPage.deviceManagement => DeviceManagementPanel(
       controller: c,
-      environments: [for (final e in c.environments)
-        if (e.role == AccessRole.admin) (id: e.id, name: e.name)],
+      environments: [
+        for (final e in c.environments)
+          if (e.role == AccessRole.admin) (id: e.id, name: e.name),
+      ],
       sensitiveFormScope: c.sensitiveFormScope,
     ),
     VaultPage.pendingPairingDetail => _pendingPairingDetail(c),
-    VaultPage.accountReset => AccountResetPanel(controller: c),
+    VaultPage.accountReset => AccountResetPanel(
+      controller: c,
+      onFinished: c.finishAccountReset,
+    ),
     VaultPage.deviceDetail => _DeviceDetail(
       c: c,
       deviceId: l.deviceId,
@@ -275,9 +271,12 @@ Widget _body(VaultController c, VaultPage? p) {
 Widget _pendingPairingDetail(VaultController c) {
   final hint = c.pendingPairingHint(c.location.pairingId ?? '');
   if (hint == null) return _missing(c, '原配对请求已过期或不在当前账号范围内。');
-  return PendingPairingDetail(request: hint, onContinue: () {
-    c.navigate(VaultPage.approval, pairingId: hint.pairingId);
-  });
+  return PendingPairingDetail(
+    request: hint,
+    onContinue: () {
+      c.navigate(VaultPage.approval, pairingId: hint.pairingId);
+    },
+  );
 }
 
 class _Root extends StatefulWidget {
@@ -295,6 +294,8 @@ class _RootState extends State<_Root> with WidgetsBindingObserver {
   String _bannerAt = '';
   String _lastKey = '';
   Timer? _expiry;
+  Timer? _errorExpiry;
+  String? _lastError;
   bool _scheduled = false;
   Widget? _formBody;
   String? _formScope;
@@ -328,6 +329,7 @@ class _RootState extends State<_Root> with WidgetsBindingObserver {
     c.removeListener(_onChange);
     WidgetsBinding.instance.removeObserver(this);
     _expiry?.cancel();
+    _errorExpiry?.cancel();
     _formBody = null;
     _formScope = null;
     _formPage = null;
@@ -335,8 +337,16 @@ class _RootState extends State<_Root> with WidgetsBindingObserver {
   }
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) =>
-      c.onLifecycleState(state);
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 先恢复前台状态，再读取保护信息，避免仍处于隐私遮罩时误报错误。
+    c.onLifecycleState(state);
+    if (state == AppLifecycleState.resumed &&
+        c.gateway is LocalProtectionGateway &&
+        !c.privacyObscured &&
+        !c.busy) {
+      unawaited(c.refreshLocalProtection());
+    }
+  }
 
   void _onChange() {
     if (_scheduled) return;
@@ -350,6 +360,13 @@ class _RootState extends State<_Root> with WidgetsBindingObserver {
 
   /// Drops stale popups on route/stage change and keeps at most one prompt.
   void _sync() {
+    if (c.error != _lastError) {
+      _lastError = c.error;
+      _errorExpiry?.cancel();
+      if (_lastError != null) {
+        _errorExpiry = Timer(const Duration(seconds: 7), c.clearError);
+      }
+    }
     final key = '${c.sessionStage.name}|${_locKey(c.location)}';
     if (key != _lastKey) {
       _lastKey = key;
@@ -445,6 +462,11 @@ class _RootState extends State<_Root> with WidgetsBindingObserver {
       final tab = page == null ? null : _tabOf(page);
       // Tab roots render their own large page title.
       final root = tab != null && page == _tabs[tab].$4;
+      final accountEntry = const {
+        VaultPage.entry,
+        VaultPage.login,
+        VaultPage.registration,
+      }.contains(page);
       final wide = MediaQuery.sizeOf(context).width >= HSize.wide;
       final frame = _Frame(
         c: c,
@@ -481,29 +503,31 @@ class _RootState extends State<_Root> with WidgetsBindingObserver {
           if (!didPop) _back();
         },
         child: Scaffold(
-          appBar: AppBar(
-            automaticallyImplyLeading: false,
-            leading: c.canGoBack ? BackButton(onPressed: _back) : null,
-            title: tab != null && !root ? Text(_titles[page]!) : null,
-            actions: [
-              if (tab != null)
-                IconButton(
-                  tooltip: '刷新',
-                  onPressed: c.busy ? null : () => unawaited(c.reload()),
-                  icon: const Icon(Icons.refresh),
+          appBar: accountEntry
+              ? null
+              : AppBar(
+                  automaticallyImplyLeading: false,
+                  leading: c.canGoBack ? BackButton(onPressed: _back) : null,
+                  title: tab != null && !root ? Text(_titles[page]!) : null,
+                  actions: [
+                    if (tab != null)
+                      IconButton(
+                        tooltip: '刷新',
+                        onPressed: c.busy ? null : () => unawaited(c.reload()),
+                        icon: const Icon(Icons.refresh),
+                      ),
+                    if (tab == null &&
+                        c.sessionStage != SessionStage.signedOut &&
+                        !c.previewMode)
+                      TextButton(
+                        onPressed: () => unawaited(c.logout()),
+                        child: const Text('退出登录'),
+                      ),
+                    const SizedBox(width: HSpace.xs),
+                  ],
                 ),
-              if (tab == null &&
-                  c.sessionStage != SessionStage.signedOut &&
-                  !c.previewMode)
-                TextButton(
-                  onPressed: () => unawaited(c.logout()),
-                  child: const Text('退出登录'),
-                ),
-              const SizedBox(width: HSpace.xs),
-            ],
-          ),
           body: SafeArea(
-            top: false,
+            top: accountEntry,
             bottom: wide || tab == null,
             child: wide && tab != null
                 ? Row(
@@ -557,7 +581,7 @@ class _RootState extends State<_Root> with WidgetsBindingObserver {
   );
 }
 
-/// Shared progress, preview, status and error chrome above every page.
+/// 持续状态保留在布局内，临时反馈悬浮显示，不挤压页面。
 class _Frame extends StatelessWidget {
   const _Frame({required this.c, required this.vault, required this.child});
 
@@ -566,17 +590,37 @@ class _Frame extends StatelessWidget {
   final Widget child;
 
   @override
-  Widget build(BuildContext context) => Column(
+  Widget build(BuildContext context) => Stack(
+    fit: StackFit.expand,
     children: [
+      Column(
+        children: [
+          if (c.previewMode) _PreviewStrip(c: c),
+          if (vault && !c.previewMode && c.phase != ConnectionPhase.online)
+            _StatusStrip(c: c),
+          Expanded(child: child),
+        ],
+      ),
       if (c.busy)
-        const LinearProgressIndicator(minHeight: HSpace.xxs)
-      else
-        const SizedBox(height: HSpace.xxs),
-      if (c.previewMode) _PreviewStrip(c: c),
-      if (vault && !c.previewMode && c.phase != ConnectionPhase.online)
-        _StatusStrip(c: c),
-      if (c.error != null) _ErrorBanner(c: c),
-      Expanded(child: child),
+        const Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: LinearProgressIndicator(minHeight: HSpace.xxs),
+        ),
+      if (c.error != null && !c.privacyObscured)
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: HSize.formWidth),
+              child: _ErrorBanner(c: c),
+            ),
+          ),
+        ),
     ],
   );
 }
@@ -686,6 +730,13 @@ class _ErrorBanner extends StatelessWidget {
           decoration: BoxDecoration(
             color: s.errorContainer,
             borderRadius: BorderRadius.circular(HRadius.md),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.12),
+                blurRadius: 18,
+                offset: const Offset(0, 6),
+              ),
+            ],
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -706,13 +757,6 @@ class _ErrorBanner extends StatelessWidget {
                     Text(
                       c.error ?? '',
                       style: text.titleSmall?.copyWith(
-                        color: s.onErrorContainer,
-                      ),
-                    ),
-                    const SizedBox(height: HSpace.xxs),
-                    Text(
-                      '操作未生效或结果未确认。请勿重复提交新内容，先刷新再决定。',
-                      style: text.bodySmall?.copyWith(
                         color: s.onErrorContainer,
                       ),
                     ),
@@ -772,7 +816,10 @@ class _EntryPage extends StatefulWidget {
 }
 
 class _EntryPageState extends State<_EntryPage> {
-  late final _endpoint = TextEditingController(text: widget.c.endpoint);
+  static final _httpsPrefix = RegExp(r'^(?:https://)+', caseSensitive: false);
+  static String _host(String value) =>
+      value.trim().replaceFirst(_httpsPrefix, '');
+  late final _endpoint = TextEditingController(text: _host(widget.c.endpoint));
   @override
   void dispose() {
     _endpoint.dispose();
@@ -782,57 +829,141 @@ class _EntryPageState extends State<_EntryPage> {
   @override
   Widget build(BuildContext context) {
     final c = widget.c;
-    final url = _endpoint.text.trim();
+    final host = _host(_endpoint.text);
+    final url = 'https://$host';
     final parsed = Uri.tryParse(url);
     final valid =
-        parsed != null && parsed.scheme == 'https' && parsed.host.isNotEmpty;
-    return HPage(
-      narrow: true,
-      children: [
-        const HBrandHero(
-          caption: '连接到 Harmonia',
-          body: '输入你自托管的服务地址。连接后再登录或创建账号。',
-        ),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          spacing: HSpace.md,
-          children: [
-            TextField(
-              controller: _endpoint,
-              keyboardType: TextInputType.url,
-              autocorrect: false,
-              enableSuggestions: false,
-              decoration: InputDecoration(
-                labelText: '服务地址',
-                hintText: 'https://',
-                prefixIcon: const Icon(Icons.dns_outlined),
-                errorText: url.isEmpty || valid ? null : '请输入完整的 HTTPS 地址',
+        host.isNotEmpty &&
+        !host.contains('://') &&
+        parsed != null &&
+        parsed.host.isNotEmpty &&
+        parsed.userInfo.isEmpty &&
+        !parsed.hasQuery &&
+        !parsed.hasFragment &&
+        !host.contains(RegExp(r'\s'));
+    return _ConnectionPage(
+      form: TextField(
+        controller: _endpoint,
+        keyboardType: TextInputType.url,
+        autocorrect: false,
+        enableSuggestions: false,
+        inputFormatters: [
+          TextInputFormatter.withFunction((oldValue, newValue) {
+            final text = _host(newValue.text);
+            final removed = newValue.text.length - text.length;
+            return newValue.copyWith(
+              text: text,
+              selection: TextSelection.collapsed(
+                offset: (newValue.selection.extentOffset - removed).clamp(
+                  0,
+                  text.length,
+                ),
               ),
-              onChanged: (_) => setState(() {}),
-            ),
-            FilledButton(
-              onPressed: c.busy || !valid
-                  ? null
-                  : () => unawaited(c.connectServer(url)),
-              child: Text(c.busy ? '正在验证…' : '下一步'),
-            ),
-          ],
+              composing: TextRange.empty,
+            );
+          }),
+        ],
+        decoration: InputDecoration(
+          labelText: '服务器地址',
+          floatingLabelBehavior: FloatingLabelBehavior.always,
+          prefixText: 'https://',
+          hintText: 'vault.example.com',
+          prefixIcon: const Icon(Icons.dns_outlined),
+          errorText: host.isEmpty || valid ? null : '请输入有效的服务器地址',
         ),
-        const HHint(
-          '仅支持 HTTPS。连接成功不等于已登录，也不会让本机成为可信设备。',
-          icon: Icons.lock_outline,
-        ),
-        if (c.previewAvailable)
-          Center(
-            child: TextButton.icon(
-              onPressed: c.busy ? null : () => unawaited(c.enterPreview()),
-              icon: const Icon(Icons.visibility_outlined, size: HSize.icon),
-              label: const Text('打开演示模式'),
+        onChanged: (_) => setState(() {}),
+      ),
+      actions: FilledButton(
+        onPressed: c.busy || !valid
+            ? null
+            : () => unawaited(c.connectServer(url)),
+        child: Text(c.busy ? '正在连接…' : '连接服务器'),
+      ),
+      footer: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        spacing: HSpace.md,
+        children: [
+          Text(
+            'HTTPS 安全连接',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
           ),
-      ],
+          if (c.previewAvailable)
+            Center(
+              child: TextButton.icon(
+                onPressed: c.busy ? null : () => unawaited(c.enterPreview()),
+                icon: const Icon(Icons.visibility_outlined, size: HSize.icon),
+                label: const Text('打开演示模式'),
+              ),
+            ),
+        ],
+      ),
     );
   }
+}
+
+/// 连接入口保留独立品牌区，地址与主操作组成一组。
+class _ConnectionPage extends StatelessWidget {
+  const _ConnectionPage({
+    required this.form,
+    required this.actions,
+    required this.footer,
+  });
+
+  final Widget form, actions, footer;
+
+  @override
+  Widget build(BuildContext context) => Align(
+    alignment: Alignment.topCenter,
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: HSize.formWidth),
+      child: CustomScrollView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        slivers: [
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: Padding(
+              padding: const EdgeInsets.all(HSpace.xl),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      const HIconTile(
+                        Icons.graphic_eq_rounded,
+                        tone: HTone.accent,
+                      ),
+                      const SizedBox(width: HSpace.md),
+                      Text('和弦', style: Theme.of(context).textTheme.titleLarge),
+                      const SizedBox(width: HSpace.sm),
+                      Text(
+                        'Harmonia',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: HSpace.xxl),
+                  const Spacer(flex: 2),
+                  const HHeader(title: '连接服务器', body: '输入服务地址，继续登录或创建账号。'),
+                  const SizedBox(height: HSpace.xxl),
+                  form,
+                  const SizedBox(height: HSpace.xl),
+                  actions,
+                  const SizedBox(height: HSpace.xxl),
+                  const Spacer(flex: 3),
+                  footer,
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 class _AccountForm extends StatefulWidget {
@@ -920,35 +1051,31 @@ class _AccountFormState extends State<_AccountForm> {
         _email.text.contains('@') &&
         _password.text.isNotEmpty &&
         (!reg || _password.text == _confirm.text);
-    final rows = <Widget>[
-      if (c.supports('restoreSession'))
-        HRow(
-          icon: Icons.phonelink_lock_outlined,
-          title: '打开本机已授权的保险库',
-          subtitle: '需要系统验证',
-          enabled: !c.busy,
-          onTap: () => unawaited(c.unlockSavedDevice()),
-        ),
-      if (c.supports('queryInitialization'))
-        HRow(
-          icon: Icons.restart_alt,
-          title: '继续本机的首台设备初始化',
-          enabled: !c.busy,
-          onTap: () => unawaited(c.resumeInitialization()),
-        ),
-      if (!reg)
-        HRow(
-          icon: Icons.health_and_safety_outlined,
-          title: '使用恢复码恢复访问',
-          onTap: () => c.navigate(VaultPage.recovery),
-        ),
-    ];
-    return HPage(
-      narrow: true,
+    return HAuthPage(
+      header: Row(
+        children: [
+          Icon(
+            Icons.dns_outlined,
+            size: HSize.iconSmall,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+          const SizedBox(width: HSpace.sm),
+          Expanded(
+            child: Text(
+              c.endpoint,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+          TextButton(
+            onPressed: c.busy ? null : c.switchServer,
+            child: const Text('更换'),
+          ),
+        ],
+      ),
       children: [
-        HBrandHero(
-          caption: reg ? '创建账号' : '登录',
-          body: reg ? '在此服务上创建新账号。' : '环境变量，多端同步。使用你在此服务上的账号登录。',
+        HHeader(
+          title: reg ? '创建账号' : '登录和弦',
+          body: reg ? '使用邮箱创建账号。' : '登录后访问你的环境变量。',
         ),
         if (!cap)
           HNotice(
@@ -984,29 +1111,24 @@ class _AccountFormState extends State<_AccountForm> {
               child: const Text('已有账号？登录'),
             ),
         ]),
-        HNotice(
-          reg
-              ? '注册只创建账号。本机随后作为首台设备初始化，需要完整重新输入新生成的恢复码。'
-              : '登录只确认账号身份。新设备需要在已授权的设备上批准后，才能查看保险库。',
-          icon: Icons.verified_user_outlined,
-        ),
-        if (rows.isNotEmpty) HSection(children: rows),
-        ...localPINAccountEntries(c),
-        if (!reg && c.serverVerified)
-          AccountResetEntry(onOpen: () => c.navigate(VaultPage.accountReset)),
-        const HHint('密码不会被保存，提交后输入框立即清空。', icon: Icons.lock_outline),
-        HSurface(
-          child: HRow(
-            icon: Icons.dns_outlined,
-            label: '服务地址',
-            title: c.endpoint.isEmpty ? '未设置' : c.endpoint,
-            trailing: TextButton(
-              style: hChipButton(Theme.of(context).colorScheme),
-              onPressed: c.busy ? null : c.switchServer,
-              child: const Text('更换'),
-            ),
+        if (!reg)
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: HSpace.sm,
+            children: [
+              TextButton(
+                onPressed: () => c.navigate(VaultPage.recovery),
+                child: const Text('恢复访问'),
+              ),
+              if (c.serverVerified)
+                TextButton(
+                  onPressed: () => c.navigate(VaultPage.accountReset),
+                  child: const Text('重置账号'),
+                ),
+            ],
           ),
-        ),
+        if (localPINAccountEntries(c).isNotEmpty)
+          HDetails(title: '本机保护', children: localPINAccountEntries(c)),
       ],
     );
   }
@@ -1020,14 +1142,22 @@ class _EmailProofPage extends StatefulWidget {
 }
 
 class _EmailProofPageState extends State<_EmailProofPage> {
-  final _challenge = TextEditingController();
   final _token = TextEditingController();
+  Timer? _resendTimer;
+  int _remaining = 0;
   late final SensitiveInputGuard _sensitiveInputs;
   @override
   void initState() {
     super.initState();
+    _remaining = widget.c.emailResendSeconds;
+    _resendTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      final seconds = widget.c.emailResendSeconds;
+      if (mounted && seconds != _remaining) {
+        setState(() => _remaining = seconds);
+      }
+    });
     _sensitiveInputs = SensitiveInputGuard(
-      [_token, _challenge],
+      [_token],
       onCleared: () {
         if (mounted) setState(() {});
       },
@@ -1036,32 +1166,41 @@ class _EmailProofPageState extends State<_EmailProofPage> {
 
   @override
   void dispose() {
+    _resendTimer?.cancel();
     _sensitiveInputs.dispose();
     _token.clear();
-    _challenge.clear();
     _token.dispose();
-    _challenge.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
     final token = _token.text.trim();
-    final challenge = _challenge.text.trim();
     _token.clear();
-    _challenge.clear();
-    await widget.c.verifyRegistrationEmail(challenge, token);
+    await widget.c.verifyRegistrationEmail(token);
+  }
+
+  Future<void> _resend() async {
+    await widget.c.resendRegistrationEmail();
+    if (mounted && widget.c.emailResendNotice != null) _token.clear();
   }
 
   @override
   Widget build(BuildContext context) {
     final c = widget.c;
+    final resendSeconds = c.emailResendSeconds;
+    var resendLabel = '重新发送验证码';
+    if (c.emailResending) {
+      resendLabel = '正在发送…';
+    } else if (resendSeconds > 0) {
+      resendLabel = '请 $resendSeconds 秒后重试';
+    }
     return HPage(
       narrow: true,
       children: [
-        const HHeader(
+        HHeader(
           icon: Icons.mark_email_unread_outlined,
           title: '验证邮箱',
-          body: '账号已创建。请输入验证邮件中的验证 ID 和验证码。',
+          body: '请输入发往 ${c.registrationEmail ?? '注册邮箱'} 的八位字母数字验证码。',
         ),
         if (!c.supports('verifyEmail'))
           const HNotice(
@@ -1071,43 +1210,58 @@ class _EmailProofPageState extends State<_EmailProofPage> {
           ),
         HSection(
           form: true,
+          footer: '请在注册开始后 15 分钟内完成验证，重发不会延长期限。每个码最多尝试 5 次，不区分大小写。',
           children: [
             TextField(
-              controller: _challenge,
-              autocorrect: false,
-              enableSuggestions: false,
-              decoration: const InputDecoration(labelText: '验证 ID'),
-              onChanged: (_) => setState(() {}),
-            ),
-            TextField(
               controller: _token,
-              obscureText: true,
+              keyboardType: TextInputType.text,
+              textCapitalization: TextCapitalization.characters,
+              maxLength: 8,
+              autofillHints: const [AutofillHints.oneTimeCode],
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9]')),
+              ],
               autocorrect: false,
               enableSuggestions: false,
               enableIMEPersonalizedLearning: false,
-              decoration: const InputDecoration(labelText: '验证码'),
+              decoration: const InputDecoration(
+                labelText: '八位验证码',
+                helperText: '可直接粘贴，连字符和空格会自动去除。',
+              ),
               onChanged: (_) => setState(() {}),
             ),
             FilledButton(
               onPressed:
                   !c.busy &&
                       c.supports('verifyEmail') &&
-                      _challenge.text.trim().isNotEmpty &&
-                      _token.text.trim().isNotEmpty
+                      !c.registrationExpired &&
+                      normalizeEmailCode(_token.text.trim()) != null
                   ? _submit
                   : null,
-              child: const Text('系统验证并提交'),
+              child: const Text('验证邮箱'),
             ),
+            TextButton(
+              onPressed:
+                  !c.busy &&
+                      resendSeconds == 0 &&
+                      !c.registrationExpired &&
+                      c.supports('requestVerificationEmail')
+                  ? _resend
+                  : null,
+              child: Text(resendLabel),
+            ),
+            if (c.registrationExpired)
+              TextButton(
+                onPressed: !c.busy && c.registrationAvailable
+                    ? () => c.navigate(VaultPage.registration)
+                    : null,
+                child: const Text('重新注册'),
+              ),
+            if (c.emailResendNotice != null)
+              Semantics(liveRegion: true, child: Text(c.emailResendNotice!)),
+            if (!c.supports('requestVerificationEmail'))
+              const Text('此版本暂不支持重新发送，请更新 App 后重试。'),
           ],
-        ),
-        _hints(const [
-          HHint('验证邮箱不会让本机成为可信设备。', icon: Icons.lock_outline),
-          HHint('暂不支持在 App 内重新发送验证邮件。'),
-          HHint('结果不明确或验证码已使用过时，请先用原账号重新登录确认状态，不要重新注册。'),
-        ]),
-        OutlinedButton(
-          onPressed: c.busy ? null : () => c.navigate(VaultPage.login),
-          child: const Text('重新登录确认状态'),
         ),
       ],
     );
@@ -1508,10 +1662,7 @@ class _EnvListState extends State<_EnvList> {
             spacing: HSpace.md,
             children: [
               Expanded(
-                child: HStat(
-                  label: '全部环境',
-                  value: '${c.environments.length}',
-                ),
+                child: HStat(label: '全部环境', value: '${c.environments.length}'),
               ),
               Expanded(
                 child: HStat(
@@ -1540,10 +1691,8 @@ class _EnvListState extends State<_EnvList> {
               role: e.role.label,
               roleIcon: _roleIcon(e.role),
               readOnly: e.role == AccessRole.readOnly,
-              onTap: () => c.navigate(
-                VaultPage.environmentDetail,
-                environmentId: e.id,
-              ),
+              onTap: () =>
+                  c.navigate(VaultPage.environmentDetail, environmentId: e.id),
             ),
         HSection(
           title: '新建环境',
@@ -1958,9 +2107,12 @@ class _DeviceList extends StatelessWidget {
             ),
         ],
       ),
-      PendingPairingsSection(controller: c, onReview: (hint) {
-        c.navigate(VaultPage.pendingPairingDetail, pairingId: hint.pairingId);
-      }),
+      PendingPairingsSection(
+        controller: c,
+        onReview: (hint) {
+          c.navigate(VaultPage.pendingPairingDetail, pairingId: hint.pairingId);
+        },
+      ),
       ManagedAccessEntry(onOpen: () => c.navigate(VaultPage.deviceManagement)),
       HSection(
         children: [
@@ -2078,7 +2230,12 @@ enum _Lifetime {
 }
 
 class _Approval extends StatefulWidget {
-  const _Approval({required this.c, this.deviceId, this.requestId, this.pairingId});
+  const _Approval({
+    required this.c,
+    this.deviceId,
+    this.requestId,
+    this.pairingId,
+  });
 
   final VaultController c;
   final String? deviceId;
@@ -2150,7 +2307,9 @@ class _ApprovalState extends State<_Approval> {
   @override
   Widget build(BuildContext context) {
     final c = widget.c;
-    final hint = widget.pairingId == null ? null : c.pendingPairingHint(widget.pairingId!);
+    final hint = widget.pairingId == null
+        ? null
+        : c.pendingPairingHint(widget.pairingId!);
     if (widget.pairingId != null &&
         (hint == null || hint.state != PendingPairingState.pending)) {
       return _missing(c, '原配对提示已到期或已批准，不能继续审批。');
@@ -2161,7 +2320,9 @@ class _ApprovalState extends State<_Approval> {
       return _missing(c, '该授权请求已过期、被撤销或你已无权处理。');
     }
     final dev = _device(c, widget.deviceId);
-    final target = hint != null ? hint.initiatorDeviceId : req != null
+    final target = hint != null
+        ? hint.initiatorDeviceId
+        : req != null
         ? '${req.deviceName}（${req.platform}）'
         : dev != null
         ? '重新配对：${dev.name}'
@@ -2366,10 +2527,9 @@ class _Settings extends StatelessWidget {
         title: '关于',
         children: [
           HRow(
-            icon: Icons.science_outlined,
-            tone: HTone.warning,
-            title: '当前为测试版本',
-            subtitle: '尚未经过独立安全审计，请勿存放生产环境凭据。',
+            icon: Icons.info_outline,
+            title: '和弦 Harmonia',
+            subtitle: '环境变量，多端同步。',
           ),
         ],
       ),

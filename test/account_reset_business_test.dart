@@ -33,7 +33,7 @@ String wire({bool complete = false, String source = 'status'}) => jsonEncode({
     if (source == 'commit') 'replayed': false,
   },
 });
-Uint8List syntheticInput() => Uint8List.fromList([65, 66, 67]);
+Uint8List syntheticInput() => utf8.encode('A2BC3DE4');
 void wiped(Uint8List value) => expect(value.every((b) => b == 0), isTrue);
 Matcher fixedFailure = isA<AccountResetFailure>();
 
@@ -176,7 +176,70 @@ NativeAccountResetAdapter adapter(PortFixture port) =>
       verifiedActions: Set.of(AccountResetAction.values),
     );
 
+class ShortCodePort extends PortFixture implements NativeAccountResetMailPort {
+  int guesses = 0;
+  final payloads = <Map<String, Object?>>[];
+  @override
+  Future<String> requestEmail(String endpoint, Uint8List email) async =>
+      '{"version":1,"accepted":true,"trustedDevice":false}';
+  @override
+  Future<String> begin(String endpoint, Uint8List proof) async {
+    payloads.add(jsonDecode(utf8.decode(proof)) as Map<String, Object?>);
+    guesses++;
+    if (guesses < 3) {
+      throw const AccountResetFailure(AccountResetFailureCode.codeInvalid);
+    }
+    return wire();
+  }
+}
+
 void main() {
+  test('短码输错后仍可重试，大小写统一且输入缓冲清零', () async {
+    final port = ShortCodePort();
+    final c = coordinator(adapter(port));
+    await c.requestAccountResetEmail('synthetic@example.invalid');
+    for (var i = 0; i < 2; i++) {
+      final input = utf8.encode('B2CD3EF4');
+      await expectLater(c.beginFreshAccountReset(input), throwsA(fixedFailure));
+      wiped(input);
+      expect(c.accountReset.allows(AccountResetAction.beginFresh), isTrue);
+      expect(c.accountReset.allows(AccountResetAction.prepare), isFalse);
+    }
+    final input = utf8.encode('a2bc 3de4');
+    await c.beginFreshAccountReset(input);
+    wiped(input);
+    expect(port.payloads.last, {
+      'email': 'synthetic@example.invalid',
+      'code': 'A2BC3DE4',
+    });
+    expect(c.accountReset.allows(AccountResetAction.prepare), isTrue);
+    expect(c.accountReset.trustedDevice, isFalse);
+    await c.dispose();
+  });
+
+  test('无效八位码保持可重试且输入被清零', () async {
+    final c = coordinator(adapter(ShortCodePort()));
+    await c.requestAccountResetEmail('synthetic@example.invalid');
+    for (final value in [
+      '123456',
+      '23456789',
+      'ABCDEFGH',
+      'A2BC3DE0',
+      'A2BC3DE1',
+      'A2BC3DEI',
+      'A2BC3DEO',
+      'ß2BC3DE',
+      'Ａ2BC3DE4',
+    ]) {
+      final input = utf8.encode(value);
+      await expectLater(c.beginFreshAccountReset(input), throwsA(fixedFailure));
+      wiped(input);
+      expect(c.accountReset.allows(AccountResetAction.beginFresh), isTrue);
+      expect(c.accountReset.allows(AccountResetAction.prepare), isFalse);
+    }
+    await c.dispose();
+  });
+
   test('默认能力与申请邮件缺口关闭，未发送原生调用', () async {
     final p = PortFixture();
     final a = NativeAccountResetAdapter(

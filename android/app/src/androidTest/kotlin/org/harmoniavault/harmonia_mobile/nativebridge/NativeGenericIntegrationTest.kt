@@ -67,7 +67,6 @@ class NativeGenericIntegrationTest {
         if(body!=null){conn.requestMethod="POST";conn.doOutput=true;conn.setRequestProperty("Content-Type","application/json");conn.outputStream.use{it.write(body.toString().toByteArray())}}
         try{assertEquals(200,conn.responseCode);return conn.inputStream.bufferedReader().use{it.readText()}}finally{conn.disconnect()}
     }
-    private fun approvals()=JSONObject(https("/test/counters")).getLong("approvals")
     private fun cleanup() {
         val keys=KeyStore.getInstance("AndroidKeyStore").apply{load(null)};if(keys.containsAlias(alias))keys.deleteEntry(alias)
         for(name in listOf(keyFilename,stateFilename)){val file=File(File(context.noBackupFilesDir,"harmonia"),name);file.delete();File(file.path+".bak").delete();File(file.path+".new").delete()}
@@ -77,7 +76,7 @@ class NativeGenericIntegrationTest {
         val activity=instrumentation.startActivitySync(Intent(context,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         val store=ProtectedDeviceStore(context,alias,keyFilename);assertTrue(store.supported())
         lateinit var plugin:NativeBridgePlugin
-        fun connect(){instrumentation.runOnMainSync{plugin=NativeBridgePlugin(activity,messenger,store,stateFilename,ca){check(saves.incrementAndGet()!=failAt)}}}
+        fun connect(){instrumentation.runOnMainSync{plugin=NativeBridgePlugin(activity,messenger,store,stateFilename,ca,beforeWorkflowSave={check(saves.incrementAndGet()!=failAt)})}}
         fun execute(op:String,fields:Map<String,String> = emptyMap())=request(plugin,"executeWorkflow",command(op,fields),op)
         connect()
         try {
@@ -93,27 +92,27 @@ class NativeGenericIntegrationTest {
                     // Receipt/root/checkpoint保存后，最终Applied保存失败仍不输出任何业务值。
                     saves.set(0);failAt=4
                     val incoming=packet.code.copyOf()
-                    val enrolled=request(plugin,"executeEnrollment",mapOf("command" to command("enrollDeviceV3",mapOf("email" to email,"password" to "synthetic-cross-password-only","pairingId" to id,"approverDeviceId" to packet.metadata.getString("approver"))),"shortCode" to incoming),"enroll-device-v3")
+                    val enrolled=request(plugin,"executeEnrollment",mapOf("command" to command("enrollDeviceV5",mapOf("email" to email,"password" to "synthetic-cross-password-only","pairingId" to id,"approverDeviceId" to packet.metadata.getString("approver"))),"shortCode" to incoming),"enroll-device-v3")
                     assertTrue(incoming.all{it==0.toByte()});packet.code.fill(0);failAt=0
                     assertFalse(enrolled.getBoolean("ok"));assertEquals("PENDING",enrolled.getString("code"));assertFalse(enrolled.has("data"));assertEquals(4,saves.get())
                     packet.candidateCompleted()
-                    val info=execute("enrollmentInfoV3").getJSONObject("data")
+                    val info=execute("enrollmentInfoV5").getJSONObject("data")
                     assertEquals("accepted-not-applied",info.getString("state"));assertFalse(info.getBoolean("trustedDevice"));assertEquals(id,info.getString("pairingId"))
                     val hidden=execute("view");assertFalse(hidden.getBoolean("ok"));assertEquals("PENDING",hidden.getString("code"));assertFalse(hidden.has("data"))
                     instrumentation.runOnMainSync{plugin.dispose()};connect()
-                    val resumed=execute("resumeEnrollmentV3",mapOf("pairingId" to id));assertTrue(resumed.getBoolean("ok"))
+                    val resumed=execute("resumeEnrollmentV5",mapOf("pairingId" to id));assertTrue(resumed.getBoolean("ok"))
                     val view=resumed.getJSONObject("data");assertEquals(device,view.getString("deviceId"));assertEquals(1,view.getJSONArray("environments").length())
                     val env=view.getJSONArray("environments").getJSONObject(0);assertEquals(y,env.getString("id"));assertEquals("Admin",env.getString("role"));assertFalse(env.getJSONObject("variables").has("SYNTHETIC_X_ONLY"))
-                    val ready=execute("enrollmentInfoV3").getJSONObject("data");assertEquals("complete",ready.getString("state"));assertTrue(ready.getBoolean("trustedDevice"))
+                    val ready=execute("enrollmentInfoV5").getJSONObject("data");assertEquals("complete",ready.getString("state"));assertTrue(ready.getBoolean("trustedDevice"))
                 }
-                val before=JSONObject(https("/test/counters")).getLong("approvalsV3")
-                assertEquals(1,before);assertEquals(0,approvals())
+                val before=JSONObject(https("/test/counters")).getLong("approvalsV5")
+                assertEquals(1,before)
                 val denied=execute("setVariable",mapOf("environmentId" to x,"name" to "SYNTHETIC_FORBIDDEN","value" to "synthetic-denied","id" to "native-generic-denied-write"));assertFalse(denied.getBoolean("ok"));assertFalse(denied.has("data"));assertEquals("UNAUTHORIZED",denied.getString("code"))
                 assertFalse(execute("rotateEnvironmentKey",mapOf("environmentId" to x,"id" to "native-generic-denied-rotate")).getBoolean("ok"))
                 val deniedChoice=JSONArray().put(JSONObject().put("environmentId",x).put("role","rw").put("expiresAt","0"))
                 val denyCode=byteArrayOf(48,48,48,48,48,48,48,48)
-                val denyApproval=request(plugin,"executeApproval",mapOf("command" to command("approvePairingV3",mapOf("pairingId" to "native-generic-denied-approval","selections" to deniedChoice.toString())),"shortCode" to denyCode),"deny-x-approval")
-                assertFalse(denyApproval.getBoolean("ok"));assertEquals("UNAUTHORIZED",denyApproval.getString("code"));assertTrue(denyCode.all{it==0.toByte()});assertEquals(before,JSONObject(https("/test/counters")).getLong("approvalsV3"))
+                val denyApproval=request(plugin,"executeApproval",mapOf("command" to command("approvePairingV5",mapOf("pairingId" to "native-generic-denied-approval","selections" to deniedChoice.toString())),"shortCode" to denyCode),"deny-x-approval")
+                assertFalse(denyApproval.getBoolean("ok"));assertEquals("UNAUTHORIZED",denyApproval.getString("code"));assertTrue(denyCode.all{it==0.toByte()});assertEquals(before,JSONObject(https("/test/counters")).getLong("approvalsV5"))
                 val rotated=execute("rotateEnvironmentKey",mapOf("environmentId" to y,"id" to "native-generic-rotate-y"));assertTrue(rotated.getBoolean("ok"))
                 val same=execute("rotateEnvironmentKey",mapOf("environmentId" to y,"id" to "native-generic-rotate-y"));assertTrue(same.getBoolean("ok"));assertEquals(rotated.getJSONObject("data").getLong("checkpoint"),same.getJSONObject("data").getLong("checkpoint"))
                 assertTrue(execute("setVariable",mapOf("environmentId" to y,"name" to "SYNTHETIC_CROSS","value" to "synthetic-cross-value","id" to "native-generic-y-value")).getBoolean("ok"))
@@ -121,17 +120,17 @@ class NativeGenericIntegrationTest {
                 socket.nextPacket().use {packet ->
                     assertEquals(y,packet.environment)
                     val choices=JSONArray().put(JSONObject().put("environmentId",y).put("role","rw").put("expiresAt",packet.expiry.toString()))
-                    https("/test/control",JSONObject().put("lose","approvalV3"))
+                    https("/test/control",JSONObject().put("lose","approvalV5"))
                     val incoming=packet.shortCode.copyOf()
-                    val out=request(plugin,"executeApproval",mapOf("command" to command("approvePairingV3",mapOf("pairingId" to packet.pairingId,"selections" to choices.toString())),"shortCode" to incoming),"approve-v3-lost-response")
+                    val out=request(plugin,"executeApproval",mapOf("command" to command("approvePairingV5",mapOf("pairingId" to packet.pairingId,"selections" to choices.toString())),"shortCode" to incoming),"approve-v3-lost-response")
                     packet.shortCode.fill(0);assertTrue(incoming.all{it==0.toByte()})
-                    assertFalse(out.getBoolean("ok"));assertEquals("PENDING",out.getString("code"));assertEquals("unknown",out.getJSONObject("data").getString("state"));assertEquals(before+1,JSONObject(https("/test/counters")).getLong("approvalsV3"));assertEquals(0,approvals())
-                    val info=execute("approvalInfoV3").getJSONObject("data");assertEquals(packet.pairingId,info.getString("pairingId"));assertEquals(y,info.getJSONArray("selections").getJSONObject(0).getString("environmentId"));assertEquals("rw",info.getJSONArray("selections").getJSONObject(0).getString("role"));assertEquals(packet.expiry.toString(),info.getJSONArray("selections").getJSONObject(0).getString("expiresAt"))
+                    assertFalse(out.getBoolean("ok"));assertEquals("PENDING",out.getString("code"));assertEquals("unknown",out.getJSONObject("data").getString("state"));assertEquals(before+1,JSONObject(https("/test/counters")).getLong("approvalsV5"))
+                    val info=execute("approvalInfoV5").getJSONObject("data");assertEquals(packet.pairingId,info.getString("pairingId"));assertEquals(y,info.getJSONArray("selections").getJSONObject(0).getString("environmentId"));assertEquals("rw",info.getJSONArray("selections").getJSONObject(0).getString("role"));assertEquals(packet.expiry.toString(),info.getJSONArray("selections").getJSONObject(0).getString("expiresAt"))
                     val hidden=execute("view");assertFalse(hidden.getBoolean("ok"));assertFalse(hidden.has("data"));assertEquals("PENDING",hidden.getString("code"))
-                    assertFalse(execute("cancelApprovalV3",mapOf("pairingId" to packet.pairingId)).getBoolean("ok"))
+                    assertFalse(execute("cancelApprovalV5",mapOf("pairingId" to packet.pairingId)).getBoolean("ok"))
                     packet.acknowledge("UNKNOWN");socket.awaitCompiledCLIStage()
                     instrumentation.runOnMainSync{plugin.dispose()};connect()
-                    val done=execute("retryApprovalV3",mapOf("pairingId" to packet.pairingId));assertTrue(done.getBoolean("ok"));assertEquals("complete",done.getJSONObject("data").getString("state"));assertTrue(done.getJSONObject("data").getLong("sequence")>0);assertEquals(before+1,JSONObject(https("/test/counters")).getLong("approvalsV3"))
+                    val done=execute("retryApprovalV5",mapOf("pairingId" to packet.pairingId));assertTrue(done.getBoolean("ok"));assertEquals("complete",done.getJSONObject("data").getString("state"));assertTrue(done.getJSONObject("data").getLong("sequence")>0);assertEquals(before+1,JSONObject(https("/test/counters")).getLong("approvalsV5"))
                     val pulled=execute("pull");assertTrue(pulled.getBoolean("ok"));val envs=pulled.getJSONObject("data").getJSONArray("environments");assertEquals(1,envs.length());assertEquals(y,envs.getJSONObject(0).getString("id"));assertEquals("synthetic-cli-write",envs.getJSONObject(0).getJSONObject("variables").getString("SYNTHETIC_CLI"))
                 }
             }

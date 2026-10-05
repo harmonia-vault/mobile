@@ -176,7 +176,7 @@ internal object PinNativeStateCAS {
     fun hash(bytes: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(bytes)
     fun validate(packet: ByteArray) {
         if (packet.isEmpty()) return
-        if (packet.size !in 40..MAX_STATE || String(packet, 0, 8, Charsets.US_ASCII) != "HARMST01") throw PinLocalException(PinLocalFault.STATE)
+        if (packet.size !in 40..MAX_STATE || String(packet, 0, 8, Charsets.US_ASCII) != "HARMST02") throw PinLocalException(PinLocalFault.STATE)
     }
     fun match(expected: ByteArray, current: ByteArray) {
         if (expected.size != 32 || !MessageDigest.isEqual(expected, hash(current))) throw PinLocalException(PinLocalFault.PERSISTENCE)

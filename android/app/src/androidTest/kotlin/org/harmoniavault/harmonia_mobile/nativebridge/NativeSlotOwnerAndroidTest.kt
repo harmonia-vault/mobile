@@ -34,7 +34,7 @@ import java.util.UUID
 /** 独立API34 store/JNI有限验收；不调用Flutter/云/DAG/PIN认证；第6项仅用合成系统凭证真实CryptoObject。 */
 class NativeSlotOwnerAndroidTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
-    private fun packet(n: Int) = "HARMST01".toByteArray() + ByteArray(32) { n.toByte() }
+    private fun packet(n: Int) = "HARMST02".toByteArray() + ByteArray(32) { n.toByte() }
     private fun slot() = "slot-owner-test-" + UUID.randomUUID().toString() + ".gcm"
     private fun rejected(block: () -> Unit) { var rejected = false; try { block() } catch (_: Exception) { rejected = true }; assertTrue(rejected) }
     private fun remoteLockVerdict(name: String, prepareAndKill: Boolean = false): Int {

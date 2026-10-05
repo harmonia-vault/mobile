@@ -13,6 +13,7 @@ class PortFixture implements NativeGatewayPort {
   bool deviceExists = false, verificationRequired = false;
   bool pendingWrite = false, unknownWrite = false;
   String? platformFailure;
+  bool registrationExpired = false;
   int profileVersion = 1;
   bool systemStrong = true;
   Set<String>? advertisedOperations;
@@ -32,6 +33,7 @@ class PortFixture implements NativeGatewayPort {
   static const operations = {
     'register',
     'verifyEmail',
+    'requestVerificationEmail',
     'loginAccount',
     'restoreSession',
     'view',
@@ -48,10 +50,10 @@ class PortFixture implements NativeGatewayPort {
     'retryBusinessOperation',
     'logout',
     'approvePairing',
-    'approvePairingV3',
-    'approvalInfoV3',
-    'retryApprovalV3',
-    'cancelApprovalV3',
+    'approvePairingV5',
+    'approvalInfoV5',
+    'retryApprovalV5',
+    'cancelApprovalV5',
   };
   Map<String, Object?> success([Object? data]) => {
     'version': 1,
@@ -113,7 +115,18 @@ class PortFixture implements NativeGatewayPort {
           'verificationRequired': verificationRequired,
         });
       case 'verifyEmail':
-        return success();
+      case 'requestVerificationEmail':
+        if (registrationExpired) {
+          return {
+            'version': 1,
+            'experimental': true,
+            'ok': false,
+            'code': 'REGISTRATION_EXPIRED',
+          };
+        }
+        return success(
+          operation == 'requestVerificationEmail' ? {'accepted': true} : null,
+        );
       case 'loginAccount':
         return success({'authenticated': true, 'trustedDevice': false});
       case 'restoreSession':
@@ -156,7 +169,7 @@ class PortFixture implements NativeGatewayPort {
         _apply(pendingFields);
         pendingWrite = false;
         return success(pending(true));
-      case 'approvalInfoV3':
+      case 'approvalInfoV5':
         return success(
           approvalState == 'none'
               ? {'state': 'none'}
@@ -166,7 +179,7 @@ class PortFixture implements NativeGatewayPort {
                   if (approvalState == 'complete') 'sequence': 9,
                 },
         );
-      case 'retryApprovalV3':
+      case 'retryApprovalV5':
         if (fields.keys.toSet().difference({'pairingId'}).isNotEmpty ||
             fields['pairingId'] != pairingId) {
           throw StateError('原审批被替换');
@@ -177,7 +190,7 @@ class PortFixture implements NativeGatewayPort {
           'pairingId': pairingId!,
           if (approvalState == 'complete') 'sequence': 9,
         });
-      case 'cancelApprovalV3':
+      case 'cancelApprovalV5':
         if (approvalState != 'prepared' || fields['pairingId'] != pairingId) {
           throw StateError('不得取消已POST审批');
         }
@@ -343,7 +356,7 @@ void main() {
     await own.loginAccount('fixture@example.invalid', 'synthetic-only');
     expect(f.createCalls, 1);
   });
-  test('首机完整新码由native返回，错误重输不可信，正确后明确cert3', () async {
+  test('首机完整新码由native返回，错误重输不可信，正确后明确cert5', () async {
     final f = PortFixture(), g = await connected(f);
     final c = VaultController(gateway: g);
     await c.initialize();
@@ -372,7 +385,7 @@ void main() {
         lifetime: const Duration(hours: 1),
       ),
     );
-    expect(f.approvalVersion, 3);
+    expect(f.approvalVersion, 5);
     expect(f.consumedCode, everyElement(0));
     c.dispose();
   });
@@ -384,10 +397,7 @@ void main() {
     await c.registerAccount('fixture@example.invalid', 'synthetic-only');
     expect(c.location.page, VaultPage.emailProof);
     expect(c.canEnterVault, false);
-    await c.verifyRegistrationEmail(
-      'challenge-fixture',
-      'synthetic-proof-token',
-    );
+    await c.verifyRegistrationEmail('a2bc-3de4');
     expect(c.sessionStage, SessionStage.deviceAuthorization);
     expect(c.location.page, VaultPage.initialization);
     expect(c.canEnterVault, false);
@@ -395,12 +405,40 @@ void main() {
     expect(f.calls.last.$2.keys.toSet(), {
       'accountId',
       'accountGeneration',
-      'challengeId',
-      'token',
+      'code',
     });
+    expect(f.calls.last.$2['code'], 'A2BC3DE4');
     expect(g.capabilities.contains('verifyEmail'), true);
     c.dispose();
   });
+  for (final resend in [false, true]) {
+    test('注册过期可重新开始且不会进入设备授权 resend=$resend', () async {
+      var now = DateTime.utc(2026, 10, 5);
+      final f = PortFixture()..verificationRequired = true;
+      final g = await connected(f),
+          c = VaultController(gateway: g, now: () => now);
+      await c.initialize();
+      await c.connectServer('https://fixture.example.invalid');
+      await c.registerAccount('fixture@example.invalid', 'synthetic-only');
+      f.registrationExpired = true;
+      now = now.add(const Duration(minutes: 15));
+      if (resend) {
+        await c.resendRegistrationEmail();
+      } else {
+        await c.verifyRegistrationEmail('A2BC3DE4');
+      }
+      expect(c.registrationExpired, true);
+      expect(c.error, '本次注册已过期，请重新注册。');
+      expect(c.sessionStage, SessionStage.signedOut);
+      expect(c.canEnterVault, false);
+      expect(c.navigate(VaultPage.registration), true);
+      f.registrationExpired = false;
+      await c.registerAccount('fixture@example.invalid', 'synthetic-only');
+      expect(c.registrationExpired, false);
+      expect(c.emailResendSeconds, 60);
+      c.dispose();
+    });
+  }
   test('未知write关闭旧view，不生新ID，query/retry仅原id，final下发才可见', () async {
     final f = PortFixture()..unknownWrite = true;
     final g = await connected(f), c = VaultController(gateway: g);
@@ -463,22 +501,19 @@ void main() {
     );
     expect(f.calls.where((entry) => entry.$1 == 'setVariable').length, 2);
   });
-  test('冷restore只有可信scope+view，不猜首机来源版本或自动v2fallback', () async {
+  test('冷恢复可信 DAG 会话后可继续授权设备', () async {
     final f = PortFixture(), g = await connected(f);
     await g.restoreSession();
-    expect(g.capabilities.contains('approveDevice'), false);
-    await expectLater(
-      g.approve(
-        ApprovalDraft(
-          pairingId: 'fixture-pair-id',
-          code: '01234567',
-          roles: {'env-fixture': AccessRole.readWrite},
-          lifetime: null,
-        ),
+    expect(g.capabilities.contains('approveDevice'), true);
+    await g.approve(
+      ApprovalDraft(
+        pairingId: 'fixture-pair-id',
+        code: '01234567',
+        roles: {'env-fixture': AccessRole.readWrite},
+        lifetime: null,
       ),
-      throwsA(isA<GatewayFailure>()),
     );
-    expect(f.approvalVersion, 0);
+    expect(f.approvalVersion, 5);
   });
   test('approved仅批准，原PairID查询/续办不新短码不新签包，complete后恢复视图', () async {
     final f = PortFixture()..approvalState = 'approved';
@@ -511,10 +546,10 @@ void main() {
     await c.retryApproval();
     expect(c.approvalProgress.state, 'complete');
     expect(c.canEnterVault, true);
-    expect(f.calls.where((e) => e.$1 == 'retryApprovalV3').single.$2, {
+    expect(f.calls.where((e) => e.$1 == 'retryApprovalV5').single.$2, {
       'pairingId': 'fixture-pair-id',
     });
-    expect(f.approvalVersion, 3);
+    expect(f.approvalVersion, 5);
     c.dispose();
   });
   for (final lateState in ['approved', 'complete', 'AUTH_CANCELLED']) {

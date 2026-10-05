@@ -57,6 +57,9 @@ class NativeIntentFailure extends GatewayFailure {
     'LOCKED': '本机安全适配器已锁定。',
     'CLOSED': '本机可信会话已关闭。',
     'REJECTED': '原生拒绝此操作，未确认任何修改。',
+    'EMAIL_CODE_INVALID': '验证码不正确，请重新输入八位字母数字。最多可尝试 5 次。',
+    'EMAIL_CODE_EXPIRED': '验证码已过期，请重新发送。',
+    'EMAIL_CODE_EXHAUSTED': '已达到 5 次尝试上限，请重新发送验证码。',
   };
 }
 
@@ -68,6 +71,16 @@ Object? nativeData(Map<String, Object?> result, {String? originalId}) {
   }
   if (result['ok'] != true) {
     final code = result['code'];
+    if (code == 'REGISTRATION_EXPIRED') {
+      throw const RegistrationExpiredFailure();
+    }
+    if (code == 'EMAIL_RATE_LIMITED') {
+      final seconds = result['retryAfterSeconds'];
+      if (seconds is! int || seconds < 1 || seconds > 86400) {
+        throw const GatewayFailure('邮件发送等待时间无效，请稍后重试。');
+      }
+      throw EmailRateLimitFailure(seconds);
+    }
     if (code is! String || !RegExp(r'^[A-Z_]{1,64}$').hasMatch(code)) {
       throw const GatewayFailure('原生失败类别无效，未确认操作。');
     }

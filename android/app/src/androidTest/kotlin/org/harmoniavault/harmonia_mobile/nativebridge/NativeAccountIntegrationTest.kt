@@ -127,10 +127,10 @@ class NativeAccountIntegrationTest {
             val emails = JSONArray(https("/test/emails")); var proof: JSONObject? = null
             for (i in 0 until emails.length()) {
                 val message = emails.getJSONObject(i)
-                if (message.getString("to") == email) for (line in message.getString("text").split('\n')) if (line.startsWith("{")) proof = JSONObject(line)
+                if (message.getString("to") == email) for (line in message.getString("text").split('\n')) if (Regex("^[2-9A-HJ-NP-Z]{8}$").matches(line)) proof = JSONObject().put("accountId", registration.getString("accountId")).put("accountGeneration", registration.getString("accountGeneration")).put("code", line)
             }
             assertNotNull("synthetic email proof missing", proof)
-            assertTrue(execute(plugin, "verifyEmail", listOf("accountId", "accountGeneration", "challengeId", "token").associateWith { proof!!.getString(it) }).getBoolean("ok"))
+            assertTrue(execute(plugin, "verifyEmail", listOf("accountId", "accountGeneration", "code").associateWith { proof!!.getString(it) }).getBoolean("ok"))
             val wrong = execute(plugin, "loginAccount", mapOf("email" to email, "password" to "synthetic-wrong-password"))
             assertFalse(wrong.getBoolean("ok")); assertFalse(wrong.has("data"))
             val login = data(execute(plugin, "loginAccount", mapOf("email" to email, "password" to password)))

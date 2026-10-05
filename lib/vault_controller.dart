@@ -1,3 +1,5 @@
+import "email_code.dart";
+
 import 'dart:async';
 import 'dart:convert';
 
@@ -112,6 +114,16 @@ class GatewayFailure implements Exception {
   });
   final String message;
   final bool suspendVault, invalidateSession;
+}
+
+class RegistrationExpiredFailure extends GatewayFailure {
+  const RegistrationExpiredFailure() : super('本次注册已过期，请重新注册。');
+}
+
+class EmailRateLimitFailure extends GatewayFailure {
+  EmailRateLimitFailure(this.retryAfterSeconds)
+    : super('请求过于频繁，请 $retryAfterSeconds 秒后重试。');
+  final int retryAfterSeconds;
 }
 
 // 界面只提交意图。真实适配必须在 Go 内完成权限检查、签密文、提交和验签拉取。
@@ -283,7 +295,7 @@ class InstanceDescriptor {
     final protocol = value['protocol'];
     if (protocol is! Map<String, dynamic> ||
         protocol['supportedMajors'] is! List ||
-        !(protocol['supportedMajors'] as List).contains(1) ||
+        !(protocol['supportedMajors'] as List).contains(2) ||
         (protocol['supportedMajors'] as List).any((v) => v is! int || v < 1) ||
         protocol['capabilities'] is! List ||
         (protocol['capabilities'] as List).any((v) => v is! String)) {
@@ -363,11 +375,11 @@ abstract interface class ApprovalContinuationGateway {
 }
 
 abstract interface class EmailProofGateway {
-  Future<void> verifyEmail(
-    AccountRegistration registration,
-    String challengeId,
-    String token,
-  );
+  Future<void> verifyEmail(AccountRegistration registration, String code);
+}
+
+abstract interface class EmailVerificationRequestGateway {
+  Future<void> requestVerificationEmail(String email);
 }
 
 abstract interface class InitializationGateway {
@@ -577,6 +589,7 @@ class VaultController extends ChangeNotifier
       queryOnly: p.queryOnly,
       localCleanupConfirmed: p.localCleanupConfirmed,
       error: p.error,
+      emailRetryAt: p.emailRetryAt,
       actions: _accountResetEligible
           ? {
               ...p.actions,
@@ -679,6 +692,20 @@ class VaultController extends ChangeNotifier
     AccountResetAction.complete,
     (f) => f.completeAccountReset(),
   );
+
+  Future<void> finishAccountReset() async {
+    if (_busy || !accountReset.localCleanupConfirmed) return;
+    final epoch = _epoch;
+    await _retireAccountReset();
+    if (_disposed || epoch != _epoch) return;
+    _vaultSuspended = false;
+    _error = null;
+    _locations
+      ..clear()
+      ..add(const VaultLocation(VaultPage.login));
+    _notify();
+  }
+
   // UI投影清理不能给native cleanup许可，也不能取消当前P3 owner/epoch。
   void _retireResetVisibleAccount() {
     _clearPendingPairings();
@@ -695,6 +722,7 @@ class VaultController extends ChangeNotifier
       devices: const [],
     );
     _registration = null;
+    _clearEmailResend();
     _initializationCode = null;
     _initializationState = 'none';
     _businessPending = const [];
@@ -1160,6 +1188,11 @@ class VaultController extends ChangeNotifier
   bool _privacyMask = false, _privacyLocked = false, _privacyUnlocking = false;
   bool _vaultSuspended = false;
   AccountRegistration? _registration;
+  String? _registrationEmail;
+  bool _registrationExpired = false;
+  DateTime? _emailResendAvailableAt;
+  bool _emailResending = false;
+  String? _emailResendNotice;
   String? _initializationCode;
   String _initializationState = 'none';
   DeviceApprovalProgress _approvalProgress = const DeviceApprovalProgress(
@@ -1240,6 +1273,25 @@ class VaultController extends ChangeNotifier
   bool get privacyLockAvailable => gateway is AppPrivacyGateway;
   bool get serverVerified => _instance != null;
   AccountRegistration? get registration => _registration;
+  String? get registrationEmail => _registrationEmail;
+  bool get registrationExpired => _registrationExpired;
+  bool get emailResending => _emailResending;
+  String? get emailResendNotice => _emailResendNotice;
+  int get emailResendSeconds {
+    final deadline = _emailResendAvailableAt;
+    if (deadline == null) return 0;
+    final remaining = deadline.difference(_now()).inMilliseconds;
+    return remaining <= 0 ? 0 : (remaining / 1000).ceil();
+  }
+
+  void _clearEmailResend() {
+    _registrationExpired = false;
+    _registrationEmail = null;
+    _emailResendAvailableAt = null;
+    _emailResending = false;
+    _emailResendNotice = null;
+  }
+
   String? get initializationCode => _initializationCode;
   String get initializationState => _initializationState;
   List<PendingVaultOperation> get businessPending => _businessPending;
@@ -1296,7 +1348,9 @@ class VaultController extends ChangeNotifier
         VaultDevice(
           id: source.deviceId,
           name: '本机',
-          platform: 'Android',
+          platform: defaultTargetPlatform == TargetPlatform.iOS
+              ? 'iOS'
+              : 'Android',
           current: true,
           accessSummary: source.snapshot.environments
               .map((e) => '${e.name}：${e.role.label}')
@@ -1570,6 +1624,7 @@ class VaultController extends ChangeNotifier
       await operation(epoch);
     } on GatewayFailure catch (failure) {
       if (epoch == _epoch) {
+        if (failure is RegistrationExpiredFailure) _registrationExpired = true;
         if (failure.invalidateSession) _resetLocalSession();
         if (failure.suspendVault) {
           _clearPendingPairings();
@@ -1629,6 +1684,7 @@ class VaultController extends ChangeNotifier
     _epoch++;
     _vaultSuspended = false;
     _registration = null;
+    _clearEmailResend();
     _initializationCode = null;
     _initializationState = 'none';
     _approvalProgress = const DeviceApprovalProgress(state: 'none');
@@ -2044,7 +2100,11 @@ class VaultController extends ChangeNotifier
             .registerAccount(email, password);
         if (epoch != _epoch) return;
         _registration = registered;
+        _registrationExpired = false;
+        _registrationEmail = email.trim().toLowerCase();
+        _emailResendNotice = null;
         if (registered.verificationRequired) {
+          _emailResendAvailableAt = _now().add(const Duration(seconds: 60));
           _locations.add(const VaultLocation(VaultPage.emailProof));
           return;
         }
@@ -2052,36 +2112,62 @@ class VaultController extends ChangeNotifier
         _locations.add(const VaultLocation(VaultPage.initialization));
       });
 
-  Future<void> verifyRegistrationEmail(String challengeId, String token) =>
-      _run((epoch) async {
-        final registered = _registration;
-        if (!serverVerified ||
-            registered == null ||
-            !registered.verificationRequired ||
-            !supports('verifyEmail') ||
-            gateway is! EmailProofGateway) {
-          throw const GatewayFailure('邮件证明适配尚未验收，未发送证明。');
-        }
-        if (!RegExp(r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$')
-                .hasMatch(challengeId) ||
-            token.isEmpty ||
-            utf8.encode(token).length > 16384) {
-          throw const GatewayFailure('请输入邮件中的挑战 ID 和一次证明 token。');
-        }
-        await (gateway as EmailProofGateway).verifyEmail(
-          registered,
-          challengeId,
-          token,
+  Future<void> resendRegistrationEmail() => _run((epoch) async {
+    final email = _registrationEmail;
+    if (!serverVerified ||
+        _registration?.verificationRequired != true ||
+        email == null ||
+        !supports('requestVerificationEmail') ||
+        gateway is! EmailVerificationRequestGateway) {
+      throw const GatewayFailure('此版本暂不支持重新发送验证邮件。');
+    }
+    final remaining = emailResendSeconds;
+    if (remaining > 0) throw EmailRateLimitFailure(remaining);
+    _emailResending = true;
+    _emailResendNotice = null;
+    _notify();
+    try {
+      await (gateway as EmailVerificationRequestGateway)
+          .requestVerificationEmail(email);
+      if (epoch != _epoch) return;
+      _emailResendAvailableAt = _now().add(const Duration(seconds: 60));
+      _emailResendNotice = '已重新发送验证码，请查看邮箱并使用最新验证码。';
+    } on EmailRateLimitFailure catch (failure) {
+      if (epoch == _epoch) {
+        _emailResendAvailableAt = _now().add(
+          Duration(seconds: failure.retryAfterSeconds),
         );
-        if (epoch != _epoch) return;
-        _registration = AccountRegistration(
-          accountId: registered.accountId,
-          accountGeneration: registered.accountGeneration,
-          verificationRequired: false,
-        );
-        _applySession(const VaultSession(SessionStage.deviceAuthorization));
-        _locations.add(const VaultLocation(VaultPage.initialization));
-      });
+      }
+      rethrow;
+    } finally {
+      if (epoch == _epoch) _emailResending = false;
+    }
+  });
+
+  Future<void> verifyRegistrationEmail(String code) => _run((epoch) async {
+    final registered = _registration;
+    if (!serverVerified ||
+        registered == null ||
+        !registered.verificationRequired ||
+        !supports('verifyEmail') ||
+        gateway is! EmailProofGateway) {
+      throw const GatewayFailure('邮件证明适配尚未验收，未发送证明。');
+    }
+    final normalized = normalizeEmailCode(code);
+    if (normalized == null) {
+      throw const GatewayFailure('请输入邮件中的八位字母数字验证码。');
+    }
+    await (gateway as EmailProofGateway).verifyEmail(registered, normalized);
+    if (epoch != _epoch) return;
+    _registration = AccountRegistration(
+      accountId: registered.accountId,
+      accountGeneration: registered.accountGeneration,
+      verificationRequired: false,
+    );
+    _clearEmailResend();
+    _applySession(const VaultSession(SessionStage.deviceAuthorization));
+    _locations.add(const VaultLocation(VaultPage.initialization));
+  });
 
   Future<void> beginInitialization(
     String email,

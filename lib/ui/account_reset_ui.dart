@@ -1,7 +1,10 @@
+import "../email_code.dart";
+
+import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../account_reset/account_reset_presentation.dart';
 import '../security/sensitive_input_guard.dart';
@@ -25,8 +28,13 @@ class AccountResetEntry extends StatelessWidget {
 }
 
 class AccountResetPanel extends StatefulWidget {
-  const AccountResetPanel({super.key, required this.controller});
+  const AccountResetPanel({
+    super.key,
+    required this.controller,
+    this.onFinished,
+  });
   final AccountResetActions controller;
+  final Future<void> Function()? onFinished;
 
   @override
   State<AccountResetPanel> createState() => _AccountResetPanelState();
@@ -44,9 +52,22 @@ class _AccountResetPanelState extends State<AccountResetPanel> {
   bool _pending = false, _cancelling = false;
   int _inputEpoch = 0;
   String? _localError;
+  Timer? _emailTimer;
+  int _lastEmailWait = 0;
+  int get _emailWait {
+    final deadline = widget.controller.accountReset.emailRetryAt;
+    final milliseconds =
+        deadline?.difference(DateTime.now()).inMilliseconds ?? 0;
+    return milliseconds <= 0 ? 0 : (milliseconds / 1000).ceil();
+  }
 
-  List<TextEditingController> get _inputs =>
-      [_email, _freshProof, _coldProof, _password, _confirm];
+  List<TextEditingController> get _inputs => [
+    _email,
+    _freshProof,
+    _coldProof,
+    _password,
+    _confirm,
+  ];
 
   @override
   void initState() {
@@ -59,6 +80,12 @@ class _AccountResetPanelState extends State<AccountResetPanel> {
       },
     );
     _attach();
+    _emailTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      final wait = _emailWait;
+      if (mounted && wait != _lastEmailWait) {
+        setState(() => _lastEmailWait = wait);
+      }
+    });
   }
 
   void _attach() {
@@ -78,7 +105,9 @@ class _AccountResetPanelState extends State<AccountResetPanel> {
     _syncScope();
     if (!widget.controller.retainAccountResetInput) {
       // 只清控件自身的输入；不修改已交给原操作的局部字节或pending寿命。
-      for (final input in _inputs) { input.clear(); }
+      for (final input in _inputs) {
+        input.clear();
+      }
     }
     if (mounted) setState(() {});
   }
@@ -120,6 +149,7 @@ class _AccountResetPanelState extends State<AccountResetPanel> {
 
   @override
   void dispose() {
+    _emailTimer?.cancel();
     _detach();
     _guard.dispose();
     for (final i in _inputs) {
@@ -143,7 +173,9 @@ class _AccountResetPanelState extends State<AccountResetPanel> {
     try {
       await action();
     } catch (_) {
-      if (_isCurrent(epoch, owner)) setState(() => _localError = '操作未完成，请查看上方状态后再试。');
+      if (_isCurrent(epoch, owner)) {
+        setState(() => _localError = '操作未完成，请查看上方状态后再试。');
+      }
     } finally {
       if (_isCurrent(epoch, owner)) setState(() => _pending = false);
     }
@@ -174,7 +206,9 @@ class _AccountResetPanelState extends State<AccountResetPanel> {
       });
       await send(bytes);
     } catch (_) {
-      if (_isCurrent(epoch, owner)) setState(() => _localError = '操作未完成，请查看上方状态后再试。');
+      if (_isCurrent(epoch, owner)) {
+        setState(() => _localError = '操作未完成，请查看上方状态后再试。');
+      }
     } finally {
       bytes.fillRange(0, bytes.length, 0);
       if (_isCurrent(epoch, owner)) setState(() => _pending = false);
@@ -197,7 +231,9 @@ class _AccountResetPanelState extends State<AccountResetPanel> {
     try {
       await owner.cancelAccountResetLocally();
     } catch (_) {
-      if (_isCurrent(epoch, owner)) setState(() => _localError = '本机取消未完成，请稍后再试。');
+      if (_isCurrent(epoch, owner)) {
+        setState(() => _localError = '本机取消未完成，请稍后再试。');
+      }
     } finally {
       if (_isCurrent(epoch, owner)) setState(() => _cancelling = false);
     }
@@ -221,19 +257,45 @@ class _AccountResetPanelState extends State<AccountResetPanel> {
     onChanged: (_) => setState(() {}),
   );
 
-  (String, HTone)? _stageNotice(AccountResetPresentation p) => switch (p.stage) {
+  Widget _codeField(TextEditingController controller) => TextField(
+    controller: controller,
+    keyboardType: TextInputType.text,
+    textCapitalization: TextCapitalization.characters,
+    maxLength: 8,
+    autofillHints: const [AutofillHints.oneTimeCode],
+    inputFormatters: [
+      FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9]')),
+    ],
+    autocorrect: false,
+    enableSuggestions: false,
+    enableIMEPersonalizedLearning: false,
+    decoration: const InputDecoration(
+      labelText: '八位验证码',
+      helperText: '可直接粘贴，连字符和空格会自动去除。',
+    ),
+    onChanged: (_) => setState(() {}),
+  );
+
+  (String, HTone)? _stageNotice(
+    AccountResetPresentation p,
+  ) => switch (p.stage) {
     AccountResetStage.unavailable => ('此设备尚不能进行邮箱重置。', HTone.neutral),
     AccountResetStage.entry => null,
-    AccountResetStage.awaitingProof => ('请查收重置邮件，并粘贴邮件中的完整凭证。', HTone.accent),
-    AccountResetStage.proofPending => (p.queryOnly
-        ? '邮件凭证有效；当前只查询原重置。'
-        : '邮件凭证已确认，可以设置新密码并明确确认删除。', HTone.warning),
+    AccountResetStage.awaitingProof => ('请查收重置邮件，输入八位字母数字验证码。', HTone.accent),
+    AccountResetStage.proofPending => (
+      p.queryOnly ? '邮件凭证有效；当前只查询原重置。' : '邮件凭证已确认，可以设置新密码并明确确认删除。',
+      HTone.warning,
+    ),
     AccountResetStage.prepared => ('已准备，尚未提交。', HTone.warning),
     AccountResetStage.unknown => ('提交结果未知。请查询或续办原重置，不要重新设置密码。', HTone.warning),
-    AccountResetStage.serverComplete => ('服务器已完成重置，本机旧数据清理尚未确认。', HTone.warning),
-    AccountResetStage.complete => p.localCleanupConfirmed
-        ? ('重置已完成，本机旧数据已清理。', HTone.success)
-        : ('服务器已完成重置，本机旧数据清理尚未确认。', HTone.warning),
+    AccountResetStage.serverComplete => (
+      '服务器已完成重置，本机旧数据清理尚未确认。',
+      HTone.warning,
+    ),
+    AccountResetStage.complete =>
+      p.localCleanupConfirmed
+          ? ('重置已完成，本机旧数据已清理。', HTone.success)
+          : ('服务器已完成重置，本机旧数据清理尚未确认。', HTone.warning),
     AccountResetStage.interrupted => (
       '已在本机取消。这不代表服务器已关闭此重置，也不代表本机数据已清理。',
       HTone.neutral,
@@ -245,33 +307,43 @@ class _AccountResetPanelState extends State<AccountResetPanel> {
     final c = widget.controller;
     final p = c.accountReset;
     final notice = _stageNotice(p);
-    final finished = p.stage == AccountResetStage.serverComplete ||
+    final finished =
+        p.stage == AccountResetStage.serverComplete ||
         p.stage == AccountResetStage.complete;
-    final canPrepare = _can(p, AccountResetAction.prepare) &&
+    final canPrepare =
+        _can(p, AccountResetAction.prepare) &&
         !p.queryOnly &&
         _password.text.isNotEmpty &&
         _confirm.text == _confirmWord;
-    final showProgress = p.allows(AccountResetAction.query) ||
+    final showProgress =
+        p.allows(AccountResetAction.query) ||
         p.allows(AccountResetAction.complete) ||
         p.allows(AccountResetAction.cancel);
     return HPage(
       narrow: true,
       children: [
         const HHeader(
-          title: '邮箱重置账号',
-          body: '用于无法恢复旧数据时重置账号。重置会删除旧保险库数据，完成后仍需重新登录并授权此设备。',
-          icon: Icons.lock_reset,
+          title: '重置账号',
+          body: '通过邮箱重新设置账号。旧保险库数据将被删除，无法恢复。',
           tone: HTone.warning,
         ),
         HSection(
+          form: true,
           children: [
-            if (p.busy || _pending || _cancelling) const LinearProgressIndicator(),
-            HNotice(p.status, icon: Icons.info_outline),
-            if (notice != null) HNotice(notice.$1, tone: notice.$2),
-            if (finished)
-              const HHint('此设备仍未受信任，请重新登录并完成设备授权或恢复。'),
-            if (p.queryOnly)
-              const HHint('当前为查询模式，只能查询原重置，不能设置新密码。'),
+            if (p.busy || _pending || _cancelling)
+              const LinearProgressIndicator(),
+            HNotice(
+              notice?.$1 ?? p.status,
+              tone: notice?.$2 ?? HTone.neutral,
+              icon: Icons.info_outline,
+            ),
+            if (finished) const HHint('请使用新密码重新登录，并初始化新的保险库。'),
+            if (p.localCleanupConfirmed && widget.onFinished != null)
+              FilledButton(
+                onPressed: _pending ? null : () => _run(widget.onFinished!),
+                child: const Text('返回登录'),
+              ),
+            if (p.queryOnly) const HHint('当前为查询模式，只能查询原重置，不能设置新密码。'),
             if (p.error != null) HNotice(p.error!, tone: HTone.danger),
             if (_localError != null) HNotice(_localError!, tone: HTone.danger),
           ],
@@ -281,13 +353,22 @@ class _AccountResetPanelState extends State<AccountResetPanel> {
             title: '申请重置邮件',
             form: true,
             children: [
-              _field(_email, '账号邮箱', obscure: false, type: TextInputType.emailAddress),
+              _field(
+                _email,
+                '账号邮箱',
+                obscure: false,
+                type: TextInputType.emailAddress,
+              ),
               FilledButton(
-                onPressed: _can(p, AccountResetAction.requestEmail) &&
+                onPressed:
+                    _can(p, AccountResetAction.requestEmail) &&
+                        _emailWait == 0 &&
                         _email.text.trim().contains('@')
-                    ? () => _run(() => c.requestAccountResetEmail(_email.text.trim()))
+                    ? () => _run(
+                        () => c.requestAccountResetEmail(_email.text.trim()),
+                      )
                     : null,
-                child: const Text('发送重置邮件'),
+                child: Text(_emailWait > 0 ? '请 $_emailWait 秒后重试' : '发送重置邮件'),
               ),
             ],
           ),
@@ -295,16 +376,17 @@ class _AccountResetPanelState extends State<AccountResetPanel> {
           HSection(
             title: '开始新的重置',
             form: true,
-            footer: '请完整粘贴邮件中给出的重置凭证，不要修改。',
+            footer: '验证码不区分大小写，15 分钟内有效，最多尝试 5 次。重新发送后旧码失效。',
             children: [
-              _field(_freshProof, '邮件中的完整重置凭证'),
+              _codeField(_freshProof),
               FilledButton(
-                onPressed: _can(p, AccountResetAction.beginFresh) &&
-                        _freshProof.text.isNotEmpty
+                onPressed:
+                    _can(p, AccountResetAction.beginFresh) &&
+                        normalizeEmailCode(_freshProof.text) != null
                     ? () => _sendBytes(
                         _freshProof,
-                        4096,
-                        '重置凭证长度不正确，请完整粘贴邮件中的内容。',
+                        8,
+                        '请输入八位字母数字验证码。',
                         c.beginFreshAccountReset,
                       )
                     : null,
@@ -318,15 +400,30 @@ class _AccountResetPanelState extends State<AccountResetPanel> {
             form: true,
             footer: '只用于查询之前的重置进度，不能开始新的重置或设置新密码。',
             children: [
-              _field(_coldProof, '原重置邮件中的完整凭证'),
+              _field(
+                _email,
+                '原账号邮箱',
+                obscure: false,
+                type: TextInputType.emailAddress,
+              ),
+              _codeField(_coldProof),
               OutlinedButton(
-                onPressed: _can(p, AccountResetAction.beginQueryOnly) &&
-                        _coldProof.text.isNotEmpty
+                onPressed:
+                    _can(p, AccountResetAction.beginQueryOnly) &&
+                        _email.text.trim().contains('@') &&
+                        normalizeEmailCode(_coldProof.text) != null
                     ? () => _sendBytes(
                         _coldProof,
-                        4096,
-                        '重置凭证长度不正确，请完整粘贴原邮件中的内容。',
-                        c.queryColdAccountReset,
+                        8,
+                        '请输入原邮件中的八位字母数字验证码。',
+                        (code) => c.queryColdAccountReset(
+                          utf8.encode(
+                            jsonEncode({
+                              'email': _email.text.trim(),
+                              'code': normalizeEmailCode(utf8.decode(code)),
+                            }),
+                          ),
+                        ),
                       )
                     : null,
                 child: const Text('查询原重置'),
@@ -385,7 +482,9 @@ class _AccountResetPanelState extends State<AccountResetPanel> {
                           ? () => _run(c.completeAccountReset)
                           : null,
                       child: Text(
-                        p.stage == AccountResetStage.prepared ? '提交重置' : '续办原重置',
+                        p.stage == AccountResetStage.prepared
+                            ? '提交重置'
+                            : '续办原重置',
                       ),
                     ),
                   if (p.allows(AccountResetAction.query))

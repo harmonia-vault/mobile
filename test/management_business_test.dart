@@ -552,12 +552,12 @@ void main() {
       ..advertisedOperations = {
         ...PortFixture.operations,
         ...managementOperations,
-        'dagRecoveredDeviceInfo',
+        'openDAGRecoveryOwner',
       };
     final g = NativeVaultGateway(
       experimentalOptIn: true,
       port: f,
-      verifiedDAGOperations: {'dagRecoveredDeviceInfo'},
+      verifiedDAGOperations: {'openDAGRecoveryOwner'},
       verifiedManagementOperations: managementOperations,
       inspector: (_) async => const InstanceDescriptor(
         initialRegistrationAvailable: false,
@@ -568,7 +568,7 @@ void main() {
     await g.initialize('');
     await g.inspectInstance('https://fixture.example.invalid');
     g.bindVerifiedServer('https://fixture.example.invalid');
-    await g.executeRecovery('dagRecoveredDeviceInfo', {}, Uint8List(0));
+    await g.executeRecovery('openDAGRecoveryOwner', {}, Uint8List(32));
     expect(g.managementCapabilities, isEmpty);
     await expectLater(g.inspectManagement(), throwsA(isA<GatewayFailure>()));
     expect(f.calls.where((x) => managementOperations.contains(x.$1)), isEmpty);

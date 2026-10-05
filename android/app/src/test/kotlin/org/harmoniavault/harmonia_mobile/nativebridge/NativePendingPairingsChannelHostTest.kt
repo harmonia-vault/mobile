@@ -8,7 +8,7 @@ object NativePendingPairingsChannelHostTest {
    check(runCatching { NativePendingPairingsChannelRequest.parse(value) }.isFailure)
    cases++
   }
-  val command = "{\"version\":1,\"endpoint\":\"https://synthetic.invalid\",\"operation\":\"pendingPairingRequestsV3\"}"
+  val command = "{\"version\":1,\"endpoint\":\"https://synthetic.invalid\",\"operation\":\"pendingPairingRequestsV5\"}"
   check(NativePendingPairingsChannelRequest.parse(mapOf("command" to command)).command == command); cases++
   reject(null); reject(command); reject(emptyMap<String, Any>())
   reject(mapOf("command" to 1)); reject(mapOf("command" to ""))

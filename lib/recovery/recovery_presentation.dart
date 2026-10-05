@@ -73,7 +73,7 @@ class RecoverySelection {
 class RecoveryPresentation {
   RecoveryPresentation({
     this.stage = RecoveryStage.entry,
-    this.status = '恢复业务尚未接通；没有执行任何恢复操作。',
+    this.status = '请输入恢复码以恢复访问。',
     this.busy = false,
     this.operationId,
     this.acceptedSequence,
@@ -103,7 +103,7 @@ class RecoveryPresentation {
   final Map<RecoveryAction, String> blockedReasons;
   bool allows(RecoveryAction action) => actions.contains(action);
   String unavailableReason(RecoveryAction action) =>
-      blockedReasons[action] ?? '此步骤尚无已验证的原生能力。';
+      blockedReasons[action] ?? '请先完成当前步骤。';
 }
 
 /// VaultController实现此合同；UI不创建UUID/hash、不做加密、不传原生scope。

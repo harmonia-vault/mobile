@@ -13,8 +13,8 @@ class NativeWorkflowStorageTest {
         val filename="synthetic-workflow-atomic.gcm"
         val store=ProtectedWorkflowStore(context,filename)
         store.delete()
-        val first="HARMST01".toByteArray()+ByteArray(64){1}
-        val second="HARMST01".toByteArray()+ByteArray(64){2}
+        val first="HARMST02".toByteArray()+ByteArray(64){1}
+        val second="HARMST02".toByteArray()+ByteArray(64){2}
         try {
             store.saveSealed(first)
             val file=File(File(context.noBackupFilesDir,"harmonia"),filename)

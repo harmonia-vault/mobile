@@ -7,10 +7,7 @@ import '../pairing/pending_pairing_presentation.dart';
 import '../vault_controller.dart';
 import 'native_ui_contract.dart';
 
-const pendingPairingOperations = {
-  'pendingPairingRequestsV3',
-  'pendingPairingRequestsV4',
-};
+const pendingPairingOperations = {'pendingPairingRequestsV5'};
 
 abstract interface class NativePendingPairingsPort {
   Future<Map<String, Object?>> executePendingPairings(
@@ -100,10 +97,8 @@ PendingPairingSnapshot decodePendingPairings(
     'requests',
     'authoritativeForApproval',
   });
-  final version = operation == 'pendingPairingRequestsV3' ? '3' : '4';
-  final expectedCapability = version == '3'
-      ? 'issuer-origin-v1'
-      : 'issuer-recovery-v1';
+  const version = '5';
+  const expectedCapability = 'issuer-recovery-dag-v1';
   final caps = data['capabilities'], rows = data['requests'];
   if (data['certificateVersion'] != version ||
       data['authoritativeForApproval'] != false ||

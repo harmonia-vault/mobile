@@ -24,7 +24,7 @@ internal class NativeDeviceSetupIntent(
     private val context: Context, private val workflowSlot: String,
     private val deviceFilename: String, private val baseAlias: String,
 ) {
-    internal data class Record(val generation: String, val kind: String, val phase: String, val packetSHA256: String, val workflowSHA256: String)
+    internal data class Record(val generation: String, val phase: String, val packetSHA256: String, val workflowSHA256: String)
     private val root = File(context.noBackupFilesDir, "harmonia")
     private val file = AtomicFile(File(root, deviceFilename + ".setup-v1.mac"))
     val metadataAlias = baseAlias + "/setup-integrity/v1"
@@ -50,8 +50,8 @@ internal class NativeDeviceSetupIntent(
     private fun encode(r: Record): ByteArray {
         val o = ByteArrayOutputStream()
         DataOutputStream(o).use { d ->
-            d.write("HARMDC01".toByteArray(Charsets.US_ASCII))
-            for (field in listOf(context.packageName, workflowSlot, deviceFilename, baseAlias, r.generation, r.kind, r.phase, r.packetSHA256, r.workflowSHA256)) {
+            d.write("HARMDC02".toByteArray(Charsets.US_ASCII))
+            for (field in listOf(context.packageName, workflowSlot, deviceFilename, baseAlias, r.generation, r.phase, r.packetSHA256, r.workflowSHA256)) {
                 val b = field.toByteArray(Charsets.UTF_8); check(b.size <= 512); d.writeInt(b.size); d.write(b)
             }
         }
@@ -59,13 +59,12 @@ internal class NativeDeviceSetupIntent(
     }
     private fun decode(body: ByteArray): Record {
         val d = DataInputStream(ByteArrayInputStream(body))
-        check(ByteArray(8).also { d.readFully(it) }.contentEquals("HARMDC01".toByteArray(Charsets.US_ASCII)))
-        val parts = (0..8).map { val n = d.readInt(); check(n in 0..512 && n <= d.available()); val b = ByteArray(n).also { d.readFully(it) }; b.toString(Charsets.UTF_8).also { check(it.toByteArray().contentEquals(b)) } }
+        check(ByteArray(8).also { d.readFully(it) }.contentEquals("HARMDC02".toByteArray(Charsets.US_ASCII)))
+        val parts = (0..7).map { val n = d.readInt(); check(n in 0..512 && n <= d.available()); val b = ByteArray(n).also { d.readFully(it) }; b.toString(Charsets.UTF_8).also { check(it.toByteArray().contentEquals(b)) } }
         check(d.available() == 0 && parts.take(4) == listOf(context.packageName, workflowSlot, deviceFilename, baseAlias))
-        val r = Record(parts[4], parts[5], parts[6], parts[7], parts[8])
-        check(r.generation.matches(Regex("[a-f0-9]{32}")) && r.kind in setOf("generation", "legacy") && r.phase in setOf("prepared", "ready", "retiring"))
+        val r = Record(parts[4], parts[5], parts[6], parts[7])
+        check(r.generation.matches(Regex("[a-f0-9]{32}")) && r.phase in setOf("prepared", "ready", "retiring"))
         for (hash in listOf(r.packetSHA256, r.workflowSHA256)) check(hash.isEmpty() || hash.matches(Regex("[a-f0-9]{64}")))
-        check(r.kind != "legacy" || r.phase == "retiring")
         check(r.phase != "prepared" || (r.packetSHA256.isEmpty() && r.workflowSHA256.isEmpty()))
         check(r.phase != "ready" || (r.packetSHA256.isNotEmpty() && r.workflowSHA256.isEmpty()))
         return r
@@ -78,7 +77,7 @@ internal class NativeDeviceSetupIntent(
         return decode(body)
     }
     fun referenceAlias(): String? = read()?.let { wrappingAlias(it) }
-    private fun wrappingAlias(r: Record) = if (r.kind == "legacy") baseAlias else baseAlias + "/setup/" + r.generation
+    private fun wrappingAlias(r: Record) = baseAlias + "/setup/" + r.generation
     private fun write(r: Record) {
         val body = encode(r); val packet = body + mac(body, create = true)
         val output = file.startWrite()
@@ -131,35 +130,34 @@ internal class NativeDeviceSetupIntent(
         // metadata orphan可严格验证后复用；从不扫描/认领未知wrapping aliases。
         if (keys().containsAlias(metadataAlias)) key(false)
         val generation = ByteArray(16).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it.toInt() and 255) }
-        val record = Record(generation, "generation", "prepared", "", "")
+        val record = Record(generation, "prepared", "", "")
         check(!keys().containsAlias(wrappingAlias(record)))
         write(record); wrappingAlias(record)
     }
     fun aliasForOpening(packet: ByteArray): String {
-        val r = read() ?: return baseAlias // 只读兼容旧格式；旧alias不能用于新create。
+        val r = read() ?: error("setup intent absent")
         check(r.phase != "retiring")
         if (r.phase == "ready") check(r.packetSHA256 == digest(packet))
         return wrappingAlias(r)
     }
     fun bindMaterial(owner: NativeSlotOwner, packet: ByteArray) = owner.mutate {
-        val r = read() ?: return@mutate // 已认证旧格式不自动迁移/授新authority。
-        check(r.phase != "retiring" && r.kind == "generation")
+        val r = read() ?: error("setup intent absent")
+        check(r.phase != "retiring")
         val hash = digest(packet)
         check(r.packetSHA256.isEmpty() || r.packetSHA256 == hash)
         if (r.phase != "ready") write(r.copy(phase = "ready", packetSHA256 = hash))
     }
     fun cancelPrepared(owner: NativeSlotOwner) = owner.clear {
         val r = read() ?: error("setup intent absent")
-        check(r.kind == "generation" && r.phase == "prepared" && stateDigest(deviceFilename).isEmpty() && stateDigest(workflowSlot).isEmpty())
+        check(r.phase == "prepared" && stateDigest(deviceFilename).isEmpty() && stateDigest(workflowSlot).isEmpty())
         matchesRemaining(deviceFilename, ""); matchesRemaining(workflowSlot, "")
         write(r.copy(phase = "retiring")); resumeCleanupRaw(r.copy(phase = "retiring"))
     }
     fun beginDeletion(owner: NativeSlotOwner) = owner.mutate {
         val device = stateDigest(deviceFilename); val state = stateDigest(workflowSlot)
         check(device.isNotEmpty())
-        val current = read()
-        val r = (current ?: Record(ByteArray(16).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it.toInt() and 255) }, "legacy", "retiring", "", ""))
-            .copy(phase = "retiring", packetSHA256 = device, workflowSHA256 = state)
+        val current = read() ?: error("setup intent absent")
+        val r = current.copy(phase = "retiring", packetSHA256 = device, workflowSHA256 = state)
         write(r); removeAlias(wrappingAlias(r))
     }
     fun finishDeletion(owner: NativeSlotOwner) = owner.mutate {

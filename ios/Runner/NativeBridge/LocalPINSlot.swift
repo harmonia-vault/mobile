@@ -50,7 +50,6 @@ final class LocalPINSlot: NSObject, MobilebridgeLocalPINStoreProtocol, Mobilebri
   private var attemptFD: Int32 = -1
   private var expectedDigest: Data?
   private var activeCore: MobilebridgeLocalPINCore?
-  private let registry: MobilebridgeRecoveryRegistry
   private var packetURL: URL { directory.appendingPathComponent("pin-state-v1.packet") }
   private var keyQuery: [String: Any] {
     [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: package + ".harmonia.pin-mac.v1",
@@ -66,10 +65,6 @@ final class LocalPINSlot: NSObject, MobilebridgeLocalPINStoreProtocol, Mobilebri
     self.namespace = package + "\0harmonia/ios-pin/v1\0" + slot
     self.directory = directory; self.systemDirectory = systemDirectory
     self.systemStore = ProtectedDeviceStore(bundleIdentifier: package)
-    guard let registry = try NativeBridgePlugin.go({ MobilebridgeNewRecoveryRegistry(package, slot, &$0) }) else {
-      throw NativeSecurityFailure("LOCKED")
-    }
-    self.registry = registry
     super.init()
   }
 
@@ -237,7 +232,6 @@ final class LocalPINSlot: NSObject, MobilebridgeLocalPINStoreProtocol, Mobilebri
       expectedDigest = try Data(SHA256.hash(data: rawPacket()))
       packet.upgradeRequired = true
       try save(packet)
-      registry.clear()
     }
     guard state == .noDevicePasscode, try !systemStore.exists(),
       !FileManager.default.fileExists(atPath: systemDirectory.appendingPathComponent("workflow-state-v1.gcm").path) else {
@@ -308,7 +302,6 @@ final class LocalPINSlot: NSObject, MobilebridgeLocalPINStoreProtocol, Mobilebri
   /// 只清本 slot；不解包旧钥匙，不发任何云请求，重新创建必有新随机设备/gen/epoch。
   func forget() throws { try withOperation { try clearSlot() } }
   private func clearSlot() throws {
-    registry.clear()
     try faults.beforeKeyDeletion()
     let status = SecItemDelete(keyQuery as CFDictionary)
     guard status == errSecSuccess || status == errSecItemNotFound else { throw NativeSecurityFailure("PERSISTENCE") }
@@ -348,10 +341,10 @@ final class LocalPINSlot: NSObject, MobilebridgeLocalPINStoreProtocol, Mobilebri
   }
   func saveWorkflowSealed(_ bytes: Data?) throws {
     guard let bytes, bytes.count >= 40, bytes.count <= (8 << 20) + 8192,
-          bytes.prefix(8) == Data("HARMST01".utf8) else { throw NativeSecurityFailure("PERSISTENCE") }
+          bytes.prefix(8) == Data("HARMST02".utf8) else { throw NativeSecurityFailure("PERSISTENCE") }
     var packet = try load(); packet.workflow = bytes; try save(packet)
   }
-  func retireOwners() throws { registry.clear(); try faults.beforeOwnerRetirement() }
+  func retireOwners() throws { try faults.beforeOwnerRetirement() }
 
   /// 仅原生测试/诊断可取非秘密计数，不经产品通道。
   func attemptMetadata() throws -> Attempts { try withOperation { try load().attempts } }
