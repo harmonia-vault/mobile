@@ -175,7 +175,7 @@ class NativeWorkflowIntegrationTest {
             request(plugin,"createDevice",null,"tls-create")
             val before=JSONArray(https("/test/emails")).length()
             val rejected=request(plugin,"executeWorkflow",command("register",mapOf("email" to "untrusted-tls@example.invalid","password" to "synthetic-tls-password")),"tls-reject")
-            assertFalse(rejected.getBoolean("ok"));assertEquals("REJECTED",rejected.getString("code"))
+            assertFalse(rejected.getBoolean("ok"));assertEquals("NETWORK_ERROR",rejected.getString("code"))
             assertEquals(before,JSONArray(https("/test/emails")).length())
             assertFalse(File(File(context.noBackupFilesDir,"harmonia"),stateFilename).exists())
         } finally {instrumentation.runOnMainSync{plugin.dispose();activity.finish()};cleanup()}

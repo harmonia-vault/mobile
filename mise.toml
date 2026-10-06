@@ -7,6 +7,16 @@ go = "1.26.4"
 ninja = "1.12.1"
 python = "3.13.14"
 
+[tasks.format-account-errors]
+run = "dart format lib/native/native_ui_contract.dart test/native_gateway_mapping_test.dart"
+
+[tasks.format-error-banner]
+run = "dart format lib/ui/harmonia_app.dart"
+
+[tasks.check-account-errors]
+description = "检查账号错误提示与页面状态的业务回归，不包含 UI 测试"
+run = ["./tool/flutter.sh analyze --no-pub", "./tool/flutter.sh test test/native_gateway_mapping_test.dart test/native_ui_contract_test.dart test/connection_privacy_test.dart test/native_lifecycle_resume_test.dart"]
+
 [tasks.deps]
 description = "解析 Flutter 依赖"
 run = "./tool/flutter.sh pub get"

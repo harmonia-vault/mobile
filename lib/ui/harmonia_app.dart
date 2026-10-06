@@ -721,12 +721,7 @@ class _ErrorBanner extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.fromLTRB(HSpace.lg, HSpace.sm, HSpace.lg, 0),
         child: Container(
-          padding: const EdgeInsets.fromLTRB(
-            HSpace.md,
-            HSpace.md,
-            HSpace.xs,
-            HSpace.xs,
-          ),
+          padding: const EdgeInsets.only(left: HSpace.md, right: HSpace.xs),
           decoration: BoxDecoration(
             color: s.errorContainer,
             borderRadius: BorderRadius.circular(HRadius.md),
@@ -739,39 +734,40 @@ class _ErrorBanner extends StatelessWidget {
             ],
           ),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Padding(
-                padding: const EdgeInsets.only(top: HSpace.xxs),
-                child: Icon(
-                  Icons.error_outline,
-                  size: HSize.icon,
-                  color: s.onErrorContainer,
-                ),
+              Icon(
+                Icons.error_outline,
+                size: HSize.icon,
+                color: s.onErrorContainer,
               ),
               const SizedBox(width: HSpace.md),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      c.error ?? '',
-                      style: text.titleSmall?.copyWith(
-                        color: s.onErrorContainer,
-                      ),
-                    ),
-                    if (c.canEnterVault)
-                      TextButton(
-                        style: TextButton.styleFrom(
-                          foregroundColor: s.onErrorContainer,
-                          padding: EdgeInsets.zero,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: HSpace.md),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        c.error ?? '',
+                        style: text.titleSmall?.copyWith(
+                          color: s.onErrorContainer,
                         ),
-                        onPressed: c.busy ? null : () => unawaited(c.reload()),
-                        child: const Text('刷新'),
-                      )
-                    else
-                      const SizedBox(height: HSpace.sm),
-                  ],
+                      ),
+                      if (c.canEnterVault)
+                        TextButton(
+                          style: TextButton.styleFrom(
+                            foregroundColor: s.onErrorContainer,
+                            padding: EdgeInsets.zero,
+                          ),
+                          onPressed: c.busy
+                              ? null
+                              : () => unawaited(c.reload()),
+                          child: const Text('刷新'),
+                        ),
+                    ],
+                  ),
                 ),
               ),
               IconButton(

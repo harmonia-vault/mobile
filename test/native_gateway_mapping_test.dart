@@ -239,6 +239,23 @@ class PortFixture implements NativeGatewayPort {
   }
 }
 
+class AccountErrorPort extends PortFixture implements NativeAccountPort {
+  Map<String, Object?>? failure;
+
+  @override
+  Future<Map<String, Object?>> capabilities() async => {
+    ...await super.capabilities(),
+    'nativePublicAccount': true,
+  };
+
+  @override
+  Future<Map<String, Object?>> executeAccount(
+    String endpoint,
+    String operation,
+    Map<String, String> fields,
+  ) async => failure ?? await super.execute(endpoint, operation, fields);
+}
+
 Future<NativeVaultGateway> connected(
   PortFixture port, {
   bool testEvidence = true,
@@ -262,6 +279,76 @@ Future<NativeVaultGateway> connected(
 }
 
 void main() {
+  for (final entry in {
+    'ACCOUNT_EXISTS': '此邮箱已注册或正在注册，请登录或完成邮箱验证。',
+    'REGISTRATION_DISABLED': '服务器已关闭注册，请联系管理员。',
+    'EMAIL_INVALID': '邮箱格式不正确，请检查后重试。',
+    'EMAIL_DELIVERY_FAILED': '验证码邮件发送失败，请联系服务器管理员。',
+    'EMAIL_UNAVAILABLE': '服务器邮件服务不可用，请联系管理员。',
+    'NETWORK_ERROR': '连接未完成，请检查网络和服务器地址后重试。',
+    'SERVER_RESPONSE_INVALID': '服务器响应无法识别，请确认客户端和服务器均已更新。',
+    'SERVER_UNAVAILABLE': '服务器暂时不可用，请稍后重试或联系管理员。',
+    'REQUEST_RATE_LIMITED': '请求过于频繁，请稍后重试。',
+    'ACCOUNT_REQUEST_FAILED': '账号操作未完成，请重试或联系服务器管理员。',
+  }.entries) {
+    test('注册失败显示具体原因并停留当前步骤 ${entry.key}', () async {
+      final port = AccountErrorPort()
+        ..failure = {
+          'version': 1,
+          'experimental': true,
+          'ok': false,
+          'code': entry.key,
+          'message': 'synthetic-secret',
+          'data': trustedFixture(),
+        };
+      final gateway = await connected(port);
+      final controller = VaultController(gateway: gateway);
+      await controller.initialize();
+      await controller.connectServer('https://fixture.example.invalid');
+      await controller.registerAccount(
+        'fixture@example.invalid',
+        'synthetic-only',
+      );
+      expect(controller.error, entry.value);
+      expect(controller.location.page, VaultPage.registration);
+      expect(controller.registration, isNull);
+      expect(controller.canEnterVault, isFalse);
+      expect(controller.busy, isFalse);
+      expect(port.deviceExists, isFalse);
+
+      port.failure = null;
+      port.verificationRequired = true;
+      await controller.registerAccount(
+        'fixture@example.invalid',
+        'synthetic-only',
+      );
+      expect(controller.error, isNull);
+      expect(controller.location.page, VaultPage.emailProof);
+      expect(controller.canEnterVault, isFalse);
+      controller.dispose();
+    });
+  }
+  test('登录拒绝显示账号提示且不进入设备授权', () async {
+    final port = AccountErrorPort()
+      ..failure = {
+        'version': 1,
+        'experimental': true,
+        'ok': false,
+        'code': 'LOGIN_FAILED',
+      };
+    final gateway = await connected(port);
+    final controller = VaultController(gateway: gateway);
+    await controller.initialize();
+    await controller.connectServer('https://fixture.example.invalid');
+    controller.navigate(VaultPage.login);
+    await controller.signIn('fixture@example.invalid', 'synthetic-only');
+    expect(controller.error, '登录失败，请检查邮箱、密码，并确认已完成邮箱验证。');
+    expect(controller.location.page, VaultPage.login);
+    expect(controller.sessionStage, SessionStage.signedOut);
+    expect(controller.canEnterVault, isFalse);
+    expect(controller.busy, isFalse);
+    controller.dispose();
+  });
   test('public同源Android证据仅开启新四意图，整体ready仍false且login不trust', () async {
     final f = PortFixture(), g = await connected(f, testEvidence: false);
     for (final operation in [
