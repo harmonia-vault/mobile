@@ -16,7 +16,7 @@ class AccountResetFailure implements Exception {
     AccountResetFailureCode.queryRequired => '必须先查询原邮件证明；不能替换原请求。',
     AccountResetFailureCode.nativeRejected => '原生未确认重置结果；请查询原请求。',
     AccountResetFailureCode.localCleanupUnconfirmed => '本机清理未确认，不能报告完成或开启新流程。',
-    AccountResetFailureCode.codeInvalid => '验证码不正确，请重新输入。最多可尝试 5 次。',
+    AccountResetFailureCode.codeInvalid => '验证码无效或已过期，请核对或重新发送。',
     AccountResetFailureCode.codeExpired => '验证码已过期，请重新发送。',
     AccountResetFailureCode.codeExhausted => '已达到 5 次尝试上限，请重新发送验证码。',
   };

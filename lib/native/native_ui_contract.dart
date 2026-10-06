@@ -58,6 +58,7 @@ class NativeIntentFailure extends GatewayFailure {
     'CLOSED': '本机可信会话已关闭。',
     'REJECTED': '原生拒绝此操作，未确认任何修改。',
     'ACCOUNT_EXISTS': '此邮箱已注册或正在注册，请登录或完成邮箱验证。',
+    'ACCOUNT_FORMAT_UNSUPPORTED': '账号数据无法读取，请联系服务器管理员。',
     'REGISTRATION_DISABLED': '服务器已关闭注册，请联系管理员。',
     'EMAIL_INVALID': '邮箱格式不正确，请检查后重试。',
     'EMAIL_DELIVERY_FAILED': '验证码邮件发送失败，请联系服务器管理员。',
@@ -70,7 +71,7 @@ class NativeIntentFailure extends GatewayFailure {
     'REQUEST_RATE_LIMITED': '请求过于频繁，请稍后重试。',
     'SERVER_UNAVAILABLE': '服务器暂时不可用，请稍后重试或联系管理员。',
     'ACCOUNT_REQUEST_FAILED': '账号操作未完成，请重试或联系服务器管理员。',
-    'EMAIL_CODE_INVALID': '验证码不正确，请重新输入八位字母数字。最多可尝试 5 次。',
+    'EMAIL_CODE_INVALID': '验证码无效或已过期，请核对或重新发送。',
     'EMAIL_CODE_EXPIRED': '验证码已过期，请重新发送。',
     'EMAIL_CODE_EXHAUSTED': '已达到 5 次尝试上限，请重新发送验证码。',
   };

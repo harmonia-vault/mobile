@@ -281,6 +281,7 @@ Future<NativeVaultGateway> connected(
 void main() {
   for (final entry in {
     'ACCOUNT_EXISTS': '此邮箱已注册或正在注册，请登录或完成邮箱验证。',
+    'ACCOUNT_FORMAT_UNSUPPORTED': '账号数据无法读取，请联系服务器管理员。',
     'REGISTRATION_DISABLED': '服务器已关闭注册，请联系管理员。',
     'EMAIL_INVALID': '邮箱格式不正确，请检查后重试。',
     'EMAIL_DELIVERY_FAILED': '验证码邮件发送失败，请联系服务器管理员。',
